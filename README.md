@@ -30,14 +30,35 @@ covers the language and its interpreter.
 
 ### 1.1 Installation
 
-Needs Python 3.11 or newer; nothing else.
+Needs Python 3.11 or newer; nothing else, and nothing to install.
+
+Get the interpreter:
 
 ```console
-$ pip install .
+git clone https://github.com/Pedram-A-Keyvani/deflang.git FOLDER/deflang
 ```
 
-This gives the `def-lang` command. Without installing, use `python -m deflang` from
-the folder that holds this one.
+- `FOLDER` is any folder you choose, like `~/code`; it holds `deflang`.
+- The folder keeps the name `deflang`.
+- After `git pull`, the new interpreter runs at once: nothing to install again.
+
+Let `def-lang` run it:
+
+```console
+alias def-lang='PYTHONPATH=FOLDER python3 -m deflang'
+```
+
+- `PYTHONPATH` is the same `FOLDER`: the one that holds `deflang`.
+- Put this line in `~/.bashrc` to have `def-lang` in every terminal.
+
+Where global libraries go (optional; [8.2](#82-libraries)):
+
+```console
+def-lang setup --global-folder GLOBAL
+```
+
+- `GLOBAL` is any folder you choose; without this step it is `~/.def-lang/libraries`.
+- It is kept in `~/.def-lang/settings.toml`, for every later run.
 
 ### 1.2 Hello, World!
 
@@ -54,8 +75,15 @@ def python say A0
 say "Hello, world!"
 ```
 
+Run it, from the folder that holds `hello`:
+
 ```console
-$ def-lang run hello
+def-lang run hello
+```
+
+It prints:
+
+```console
 Hello, world!
 ```
 
@@ -65,7 +93,7 @@ Hello, world!
 ### 1.3 The Console
 
 ```console
-$ def-lang
+def-lang
 ```
 
 - Type lines, then `on` to run them.
@@ -785,18 +813,14 @@ shapes = { from = "my-libraries/shapes", link = true }
 
 ### 8.3 Installing
 
-```console
-$ def-lang install URL#FOLDER
-$ def-lang install URL#FOLDER --global
-$ def-lang install FOLDER --link
-$ def-lang install
-```
-
-- `URL#FOLDER`: copies the library in that folder of a git repo into `libraries/`
-  (needs git).
-- `--global`: copies it into `GLOBAL/NAME/VERSION/` instead, if it isn't there yet.
-- `FOLDER --link`: a local library, a folder of the project; nothing is copied.
-- No source: installs everything in `libraries.toml` again.
+- `def-lang install URL#FOLDER`: copies the library in that folder of a git repo into
+  `libraries/` (needs git).
+- `def-lang install URL#FOLDER --global`: copies it into `GLOBAL/NAME/VERSION/`
+  instead, if it isn't there yet.
+- `def-lang install FOLDER --link`: a local library, a folder of the project; nothing
+  is copied.
+- `def-lang install`: installs everything in `libraries.toml` again.
+- `def-lang setup --global-folder GLOBAL`: where global libraries go from now on.
 - Each adds its line to `libraries.toml`, and installs the libraries the library's
   own `libraries.toml` lists.
 - It works on the program in the current folder; `--into FOLDER` picks another.
@@ -809,7 +833,7 @@ An error stops the program with its message; in a used file it starts with
 `FILE:LINE:`. All messages are listed in [Appendix D](#d-error-messages).
 
 ```console
-$ def-lang check hello
+def-lang check hello
 ```
 
 `check` reads a program without running it:
