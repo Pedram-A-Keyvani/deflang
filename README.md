@@ -3,6 +3,14 @@
 def-lang is a declarative, natural-language-like programming language. This guide
 covers the language and its interpreter.
 
+**Related repositories**
+
+| Repository | Holds |
+|---|---|
+| [deflang-lib](https://github.com/Pedram-A-Keyvani/deflang-lib) | the libraries: `core` (values, questions, loops, lists, text, math), `html`, `css`, `javascript`, `web`; each with a README of its words |
+| [deflang-sample](https://github.com/Pedram-A-Keyvani/deflang-sample) | sample programs (hello world to a website), and the tests of the interpreter and the libraries |
+| [deflang-editor](https://github.com/Pedram-A-Keyvani/deflang-editor) | the VS Code extension: colors, hover, Ctrl+click, IntelliSense, errors as you type; it carries the interpreter |
+
 **Contents**
 
 1. [Getting Started](#1-getting-started)
