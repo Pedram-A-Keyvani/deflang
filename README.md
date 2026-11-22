@@ -792,17 +792,19 @@ A library is a folder of `.def` files with a `library.toml`:
 A program lists its libraries in its `libraries.toml`, one table each:
 
 ```toml
-web    = { from = "https://example.com/libs.git#web" }
-core   = { from = "https://example.com/libs.git#core", global = "0.1.0" }
+web    = { from = "https://example.com/libs.git#web", version = "0.1.0" }
+core   = { from = "https://example.com/libs.git#core", version = "0.1.0", global = true }
 shapes = { from = "my-libraries/shapes", link = true }
 ```
 
 | Kind | Written | Lives in | In git |
 |---|---|---|---|
 | in the project | `from` a git `URL#FOLDER` | `libraries/NAME/`, a copy | no: `libraries/.gitignore` leaves it out |
-| global | `from` a git `URL#FOLDER`, with `global = "VERSION"` | `GLOBAL/NAME/VERSION/`, a copy shared by every program | no: it is outside the project |
+| global | `from` a git `URL#FOLDER`, with `global = true` | `GLOBAL/NAME/VERSION/`, a copy shared by every program | no: it is outside the project |
 | local | `from` a folder of the project, with `link = true` | that folder, used where it is | yes |
 
+- `version` is written by `def-lang install`: the version in the library's `library.toml`.
+  A local library has none: it is used as it is.
 - Only a library from git can be global; only a folder of the project can be linked.
 - `GLOBAL` is `~/.def-lang/libraries`; `def-lang setup --global-folder PATH` sets
   another, and `$DEFLANG_GLOBAL` sets one for a single run.
@@ -819,7 +821,8 @@ shapes = { from = "my-libraries/shapes", link = true }
   instead, if it isn't there yet.
 - `def-lang install FOLDER --link`: a local library, a folder of the project; nothing
   is copied.
-- `def-lang install`: installs everything in `libraries.toml` again.
+- `def-lang install`: installs everything in `libraries.toml` again; a version that changed
+  is shown (`web: 0.1.0 → 0.2.0`) and written down.
 - `def-lang setup --global-folder GLOBAL`: where global libraries go from now on.
 - Each adds its line to `libraries.toml`, and installs the libraries the library's
   own `libraries.toml` lists.

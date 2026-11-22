@@ -2,13 +2,14 @@
 
 A program lists its libraries in libraries.toml, one table each:
 
-    web    = { from = "https://example.com/libs.git#web" }                    in the project
-    core   = { from = "https://example.com/libs.git#core", global = "0.1.0" } global
-    shapes = { from = "my-libraries/shapes", link = true }                    local
+    web    = { from = "https://example.com/libs.git#web", version = "0.1.0" }                 in the project
+    core   = { from = "https://example.com/libs.git#core", version = "0.1.0", global = true } global
+    shapes = { from = "my-libraries/shapes", link = true }                                   local
 
 - in the project: a copy in libraries/NAME (git keeps it out: libraries/.gitignore)
 - global: a copy in GLOBAL/NAME/VERSION, shared by every program
 - local: a folder of the project, used where it is
+`version` is written by `install`: the version the library's library.toml gave.
 
 A library may have a libraries.toml too, of the same shape, with `from` only: a
 relative `from` is a folder of the same source (`../language/javascript`), and it is
@@ -69,6 +70,8 @@ def listed(owner: Path) -> dict:
     for name, entry in found.items():
         if not isinstance(entry, dict) or "from" not in entry:
             raise DefException(f'{file}: write {name} as {name} = {{ from = "..." }}')
+        if isinstance(entry.get("global"), str):
+            raise DefException(f'{file}: write {name}\'s global = "{entry["global"]}" as version = "{entry["global"]}", global = true')
     return found
 
 
@@ -78,6 +81,8 @@ def check_entry(program: Path, name: str, entry: dict):
     if _is_git(source):
         if entry.get("link"):
             raise DefException(f"{name}: a library from git can't be linked: it is copied (or global)")
+        if entry.get("global") and not entry.get("version"):
+            raise DefException(f"{name}: a global library needs its version: install it again")
         return
     if entry.get("global"):
         raise DefException(f"{name}: only a library from git can be global")
@@ -97,8 +102,8 @@ def folder_of(owner: Path, name: str) -> Optional[Path]:
     entry = listed(owner).get(name)
     if not entry:
         return None
-    if entry.get("global"):
-        found = global_folder() / name / str(entry["global"])
+    if entry.get("global") is True:
+        found = global_folder() / name / str(entry.get("version", ""))
     elif _is_git(entry["from"]):
         return None  # not installed yet
     else:
@@ -125,7 +130,8 @@ def write_list(program: Path, entries: dict):
              "# `python -m deflang install`; run it with no arguments to install them all again.", ""]
     for name, entry in sorted(entries.items()):
         source = entry["from"].replace("\\", "/").replace('"', '\\"')
-        extra = ", link = true" if entry.get("link") else f', global = "{entry["global"]}"' if entry.get("global") else ""
+        extra = (f', version = "{entry["version"]}"' if entry.get("version") else "") + \
+                (", global = true" if entry.get("global") else "") + (", link = true" if entry.get("link") else "")
         lines.append(f'{name} = {{ from = "{source}"{extra} }}')
     (program / "libraries.toml").write_text("\n".join(lines) + "\n")
 
@@ -152,18 +158,19 @@ def install(program: Path, source: str, link: bool = False, globally: bool = Fal
             name = info["name"]
             if name in done or name in skip:
                 return
+            version = str(info["version"]) if "version" in info else None
             if globally:
-                if "version" not in info:
+                if not version:
                     raise DefException(f"{name} has no version in its library.toml: a global library needs one")
-                entry = {"from": source, "global": str(info["version"])}
+                entry = {"from": source, "version": version, "global": True}
             elif link:
                 entry = {"from": _relative(folder, program), "link": True}
             else:
-                entry = {"from": source}
+                entry = {"from": source, **({"version": version} if version else {})}
             check_entry(program, name, entry)
             done.append(name)
             if globally:
-                target = global_folder() / name / entry["global"]
+                target = global_folder() / name / entry["version"]
                 if not target.exists():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(folder, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
@@ -177,8 +184,11 @@ def install(program: Path, source: str, link: bool = False, globally: bool = Fal
                     shutil.rmtree(target)
                 shutil.copytree(folder, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
                 where = ""
+            before = entries.get(name, {}).get("version")
             entries[name] = entry
             say(f"installed {name} {info.get('version', '')}".rstrip() + where)
+            if before and entry.get("version") and before != entry["version"]:
+                say(f"{name}: {before} → {entry['version']}")
             for need, need_entry in listed(folder).items():
                 one(_source_of(need_entry["from"], source, folder, program))
 
