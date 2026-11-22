@@ -738,8 +738,8 @@ def python count of A0
 
 1. next to the file with the `use` line;
 2. in the program's folder (the folder of the `main.def` that runs);
-3. in the program's libraries;
-4. for a file of a library: in the libraries next to that library.
+3. in the program's libraries ([8.2](#82-libraries));
+4. for a file of a library: in the libraries its `libraries.toml` lists.
 
 A file runs once; using it again does nothing. `as` is only for names: `use core as c`
 is an error.
@@ -751,28 +751,46 @@ A library is a folder of `.def` files with a `library.toml`:
 | Key | Is |
 |---|---|
 | `name` | the library's name (required) |
-| `needs` | the names of the libraries it uses, installed with it |
+| `version` | its version (required to install it globally) |
 
-A program's libraries are:
+A program lists its libraries in its `libraries.toml`, one table each:
 
-- **`libraries/NAME/`**: an installed copy;
-- **`libraries.toml`**: each library and where it comes from:
-  `NAME = "SOURCE"`, or `NAME = { from = "FOLDER", link = true }` for a linked one.
+```toml
+web    = { from = "https://example.com/libs.git#web" }
+core   = { from = "https://example.com/libs.git#core", global = "0.1.0" }
+shapes = { from = "my-libraries/shapes", link = true }
+```
+
+| Kind | Written | Lives in | In git |
+|---|---|---|---|
+| in the project | `from` a git `URL#FOLDER` | `libraries/NAME/`, a copy | no: `libraries/.gitignore` leaves it out |
+| global | `from` a git `URL#FOLDER`, with `global = "VERSION"` | `GLOBAL/NAME/VERSION/`, a copy shared by every program | no: it is outside the project |
+| local | `from` a folder of the project, with `link = true` | that folder, used where it is | yes |
+
+- Only a library from git can be global; only a folder of the project can be linked.
+- `GLOBAL` is `~/.def-lang/libraries`; `def-lang setup --global-folder PATH` sets
+  another, and `$DEFLANG_GLOBAL` sets one for a single run.
+- A library may have a `libraries.toml` too, with `from` only. A relative `from` is a
+  folder of the same source: in `web/libraries.toml`,
+  `javascript = { from = "../language/javascript" }`. Those libraries are installed
+  with it, the same way.
 
 ### 8.3 Installing
 
 ```console
-$ def-lang install FOLDER
 $ def-lang install URL#FOLDER
+$ def-lang install URL#FOLDER --global
 $ def-lang install FOLDER --link
 $ def-lang install
 ```
 
-- `FOLDER`: copies the library into `libraries/`, and adds it to `libraries.toml`.
-- `URL#FOLDER`: the library in that folder of a git repo (needs git).
-- `--link`: no copy; `libraries.toml` points to the folder.
-- no source: installs everything in `libraries.toml` again.
-- The libraries in `needs` are taken from next to the one being installed.
+- `URL#FOLDER`: copies the library in that folder of a git repo into `libraries/`
+  (needs git).
+- `--global`: copies it into `GLOBAL/NAME/VERSION/` instead, if it isn't there yet.
+- `FOLDER --link`: a local library, a folder of the project; nothing is copied.
+- No source: installs everything in `libraries.toml` again.
+- Each adds its line to `libraries.toml`, and installs the libraries the library's
+  own `libraries.toml` lists.
 - It works on the program in the current folder; `--into FOLDER` picks another.
 
 ---

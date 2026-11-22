@@ -5,9 +5,13 @@
     python -m deflang check FILE.def | FOLDER  list its errors without running it
                                                (--json for editors; --text FILE: FILE's
                                                text is read from stdin, saved or not)
-    python -m deflang install SOURCE [--link]  install a library from a folder or a git URL
-                                               (`URL#subfolder`), with the libraries it needs
+    python -m deflang install URL#FOLDER       install a library from a git repo into the project
+                                               (libraries/), with the libraries it uses
+    python -m deflang install URL#FOLDER --global   the same, into the global folder
+    python -m deflang install FOLDER --link    a local library: a folder of the project
     python -m deflang install                  install the program's libraries.toml again
+    python -m deflang setup --global-folder PATH   where global libraries are kept
+                                               (default ~/.def-lang/libraries)
 
 `install` works on the program in the current folder; `--into FOLDER` picks another.
 """
@@ -137,8 +141,8 @@ def main(arguments=None):
                 at = rest.index("--into")
                 program = Path(rest[at + 1]).resolve()
                 rest = rest[:at] + rest[at + 2:]
-            link = "--link" in rest
-            rest = [r for r in rest if r != "--link"]
+            link, globally = "--link" in rest, "--global" in rest
+            rest = [r for r in rest if r not in ("--link", "--global")]
             if not rest:
                 if not libraries.listed(program):
                     raise DefException(f"{program} has no libraries.toml yet: install a library first ({libraries.HOW_TO_INSTALL})")
@@ -148,7 +152,10 @@ def main(arguments=None):
                 # a folder is relative to where you are, like any command
                 if "://" not in source and Path(source).exists():
                     source = str(Path(source).resolve())
-                libraries.install(program, source, link=link)
+                libraries.install(program, source, link=link, globally=globally)
+            return None
+        if command == "setup" and rest[:1] == ["--global-folder"] and len(rest) == 2:
+            print(f"global libraries are kept in {libraries.set_global_folder(rest[1])}")
             return None
         print(__doc__.strip())
         return 2

@@ -343,8 +343,8 @@ class Execute:
     def _resolve(self, name: str) -> Path:
         """`use x`: x.def next to the file that uses it, or in the program's folder; else a
         library: `use core` is the core library's main.def, `use web/server` the web
-        library's server.def. A library is found among the program's libraries, or next to
-        the library that imports it."""
+        library's server.def. A library is found among the program's libraries, or, for a
+        file of a library, among the libraries that library's libraries.toml lists."""
         from deflang import libraries
         program = self.program_dir or Path(os.getcwd())
         for directory in self._import_dirs[-1:] + [program]:
@@ -354,8 +354,8 @@ class Execute:
         library, _, inside = name.partition("/")
         folders = [libraries.folder_of(program, library)]
         here = self._import_dirs[-1] if self._import_dirs else None
-        if here and (here / "library.toml").is_file() and (here.parent / library / "library.toml").is_file():
-            folders.append(here.parent / library)
+        if here and (here / "library.toml").is_file():
+            folders.append(libraries.folder_of(here, library))
         for folder in filter(None, folders):
             path = (folder / f"{inside or 'main'}.def").resolve()
             if path.is_file():
