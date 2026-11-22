@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "def-lang"
+version = "0.1.0"
+description = "A declarative, natural-language-like programming language"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+def-lang = "deflang.__main__:main"
+
+# this folder is the package itself
+[tool.setuptools]
+package-dir = { "deflang" = "." }
+packages = ["deflang"]

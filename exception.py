@@ -1,0 +1,2 @@
+class DefException(Exception):
+    pass
