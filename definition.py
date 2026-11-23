@@ -121,6 +121,8 @@ class Definition:
     language: Optional[str] = None  # the body's language; None is def-lang
     is_language: bool = False        # the runner of a `language NAME` declaration
     file: Optional[object] = None    # the .def file it was read from (a Path), None if typed in
+    flags: dict = field(default_factory=dict)  # its flags: {"written": None, "cache": "60"}
+    internal: bool = False           # only its own file sees it (the `internal` modifier)
     patterns: List[re.Pattern] = field(default_factory=list)
     body: List[str] = field(default_factory=list)
     _function: Optional[Callable] = field(default=None, repr=False)

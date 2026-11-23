@@ -44,8 +44,8 @@ internal     def[written]  repeat A0 times : A1
 - **In front:** where it is visible (modifiers). **Right after the language:** how it
   works (flags). **Then, after at least one space:** the pattern, with no exceptions. A
   pattern can start with any word, or with `[`: `def python temperature A0` is a
-  def-lang def whose pattern is `python temperature A0`, and `def [A0] first` one
-  whose pattern is `[A0] first`.
+  def-lang def whose pattern is `python temperature A0`, and `def [ A0 ] first` one
+  whose pattern is `[ A0 ] first` (`[A0]` without spaces would be one fixed word).
 
 ### Flags
 
@@ -135,13 +135,13 @@ statement comment
 |---|---|---|---|---|
 | `def X` | language | `def X` | `kernel["language"]["def"]` | the kernel (built in) |
 | `def python X` | language | `python X` | `kernel["language"]["python"]` | the kernel (built in) |
-| `def html X`, `css`, `javascript` | language | `html X` | `kernel["language"]["html"]` | their libraries (`language html`) |
-| `language html` | entry | `language html` with its fields | `kernel["language"]["html"]` | the html library |
+| `def html X`, `css`, `javascript` | language | `html X` | `kernel["language"]["html"]` | the language library (`language html`) |
+| `language html` | entry | `language html` with its fields | `kernel["language"]["html"]` | the language library (`language/html.def`) |
 | `def as written X` | flag | `def[written] X` | `kernel["flag"]["written"]` | the kernel |
 | `def python as written X` | flag | `python[written] X` | `kernel["flag"]["written"]` | the kernel |
 | `def regex X` | flag | `def[regex] X` | `kernel["flag"]["regex"]` | the kernel |
-| `shared NAME …` | modifier | `shared NAME …` | `kernel["modifier"]["shared"]` | core |
-| (new) | modifier | `internal def …` | `kernel["modifier"]["internal"]` | core |
+| `shared NAME …` | modifier | `shared NAME …` | `kernel["modifier"]["shared"]` | the modifier library (`modifier/shared.def`), used by core |
+| (new) | modifier | `internal def …` | `kernel["modifier"]["internal"]` | the modifier library (`modifier/internal.def`), used by core |
 | `use`, `comment is`, `argument is`, `indent`, `error`, `` `…` `` | statement | as now | `kernel["statement"][…]` | the kernel |
 | a language's `BODY`, `VAR`, `fill` | (runner's arguments) | as now | | |
 | `self.share`, `self.variables`, `self.store`, … | the tree | `kernel[…]` | | |
@@ -166,7 +166,7 @@ into core (`language def`) and the statements into libraries are later steps (se
 | Where | How much |
 |---|---|
 | **deflang** | the reader (line kinds, entries, `language[flags]`), the kernel tree, the Python API, `check`, the guide (chapters 2, 4, 5, 6 and the appendix) |
-| **deflang-lib** | 48 `def python` → `python`; 21 `def python as written` → `python[written]`; 4 `def as written` → `def[written]`; 6 `def html`, 6 `def css`, 2 `def javascript` → `html`, `css`, `javascript`; the 3 `language` lines get their fields; `shared` and `internal` as entries in core |
+| **deflang-lib** | 48 `def python` → `python`; 21 `def python as written` → `python[written]`; 4 `def as written` → `def[written]`; 6 `def html`, 6 `def css`, 2 `def javascript` → `html`, `css`, `javascript`; the 3 `language` lines get their fields; one library per kind, one file per entry: `language/` (`html.def`, `css.def`, `javascript.def`) and `modifier/` (`shared.def`, `internal.def`, used by core) |
 | **deflang-sample** | the same rewriting in the samples, and the tests |
 | **deflang-editor** | reading the new line shapes, `[flags]` and entries; keyword colors from the entries; hover help from their comment lines |
 

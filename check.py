@@ -39,6 +39,18 @@ def check_bodies(engine, path, started):
             engine.problems.append((path, number, " ".join(map(str, error.args))))
 
 
+def check_entries(engine, path):
+    """Compile the `does` of the file's entries, so a syntax error shows on its entry's line."""
+    from deflang.kernel import PARAMETERS
+    for kind, entries in engine.kernel.items():
+        for entry in entries.values():
+            if entry.file == path and entry.does is not None:
+                try:
+                    entry.does.function(PARAMETERS[kind])
+                except DefException as error:
+                    engine.problems.append((path, entry.line, " ".join(map(str, error.args))))
+
+
 def _known(engine, name: str) -> bool:
     if name in engine.variables:
         return True

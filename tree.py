@@ -187,7 +187,9 @@ class Parser:
            `a is 2 + 3` is `a is (2 + 3)`.
         """
         definitions = self.engine.definitions
-        candidates: List[Match] = [m for d in definitions for m in d.matches(text)]
+        # an internal def is seen only by the lines of its own file
+        here = self.engine.variables.file
+        candidates: List[Match] = [m for d in definitions if not d.internal or d.file == here for m in d.matches(text)]
         if not candidates:
             return []
         spans = [c.keyword_spans for c in candidates]

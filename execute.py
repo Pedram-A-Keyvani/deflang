@@ -1,8 +1,11 @@
 """Runs def-lang one line at a time.
 
-A line is either a statement (comment / use / argument / def / def body /
-indented conditional line / error) or an expression. Expressions are parsed into a tree with
-the current definitions (tree.py) and then evaluated.
+A line is, told apart from its start (see KERNEL.md): a statement (use, comment is,
+argument is, indent, error, or one a library declares), an entry (`language`, `flag`,
+`modifier` or `statement`, then a name, with its fields one level in), a modifier in
+front of a line (`internal def ...`, `shared visits is 0`), a definition
+(`language[flags] pattern`, then its body), or an expression. Expressions are parsed into
+a tree with the current definitions (tree.py) and then evaluated.
 """
 import ast
 import contextlib
@@ -11,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from deflang import kernel as kernels
 from deflang.definition import SLOT_REGEX, Definition
 from deflang.exception import DefException
 from deflang.tree import Parser
@@ -22,17 +26,13 @@ _USE = re.compile(r"use\s+(.+)")
 _USE_FROM = re.compile(r"(.+?)\s+from\s+(\S+)")  # use visits, total as t from counter
 _ARGUMENT = re.compile(r"argument\s+is\s+(.+)")
 _INDENT = re.compile(r"indent\s+(\d+)\s*")
-# `shared NAME`, and maybe more: `shared visits is 0` is `shared visits`, then `visits is 0`
-_SHARED = re.compile(r"shared\s+(\w+)(.*)")
 _SAME = object()  # own_variables(): the file of the lines running now
 DEFAULT_INDENT = 4  # spaces per level; a tab is always one level
-_DEF = re.compile(r"def\s+(.+)")
-_DEF_FLAG = re.compile(r"(as\s+written|regex)\s+")
-_LANGUAGE = re.compile(r"language\s+(\w+)\s*")
-_WORD = re.compile(r"(\w+)\s+")
-# Python is the one language built into the interpreter; others are declared
-# with `language NAME` (see the core library's primitives.def).
-BUILT_IN_PYTHON = "built-in python"
+# a definition: `language pattern` or `language[flags] pattern`; the pattern after a space
+_DEFINITION = re.compile(r"(\w+)(\[[^\]]*\])?\s+(\S.*)")
+# an entry: `language html`, `modifier internal`, `statement comment`
+_ENTRY = re.compile(r"(language|flag|modifier|statement)(?:\s+(.*))?")
+_WORD = re.compile(r"(\w+)\s+(\S.*)")
 _ERROR = re.compile(r"error\s+(.+)")
 _ECHO = re.compile(r"`(.+)`\s*")  # `line` prints the line, then runs it
 
@@ -63,8 +63,11 @@ class Execute:
         # folder of the program being run; relative paths start here
         self.program_dir: Optional[Path] = None
         self._parser = Parser(self)
-        # languages: the flag word -> its runner (a Definition with a Python body)
-        self.languages = {"python": BUILT_IN_PYTHON}
+        # every language, flag, modifier and statement: kernel[kind][name] -> Entry
+        self.kernel = kernels.built_in()
+        self._current_entry: Optional[kernels.Entry] = None  # the entry whose fields are being read
+        self._line_number = 0  # the line of the file being read, for an entry's place
+        self.reloading = False  # reload(): only what defines runs again
         self._stores = {}
         self.clean()
 
@@ -88,6 +91,8 @@ class Execute:
             return None
         # a body in another language keeps its lines as they are: a JavaScript `// ...`
         # there is part of the code, not a def-lang comment
+        if line[0].isspace() and self._current_entry is not None:
+            return self._entry_line(self._current_entry, line)
         current = self._current_def
         if line[0].isspace() and current is not None and current.language is not None:
             # its own language checks its indentation; tabs become `indent` spaces
@@ -97,6 +102,8 @@ class Execute:
             return None
 
         level = self._level(line)
+        if level and current is None and self.reloading:
+            return None  # a line that belongs to a question: it doesn't run again
         if level and current is not None:
             # a def-lang body: stored with 4 spaces a level, the way it runs (_run_body)
             current.add_line(" " * DEFAULT_INDENT * level + line.strip(), self._argument_name)
@@ -142,19 +149,18 @@ class Execute:
         return result
 
     def _line(self, line: str, level: int):
-        """A line without its indentation: (its value, whether it was a statement)."""
+        """A line without its indentation: (its value, whether it was a statement).
+        Told apart from its start, in this order: a statement, an entry, a modifier, a
+        definition; anything else is an expression."""
         pending, self._current_def = self._current_def, None
+        self._current_entry = None
+        if self.reloading and (_ECHO.fullmatch(line) or _ERROR.fullmatch(line)):
+            return None, True
         if m := _ECHO.fullmatch(line):
             if self._output is not None:
                 self._output(m.group(1).strip())
             return self._line(m.group(1).strip(), level)
-        if m := _SHARED.fullmatch(line):
-            name, rest = m.group(1), m.group(2).strip()
-            self.share(name)
-            if rest:
-                # the rest is an ordinary line, with the name in front again
-                return self._line(f"{name} {rest}", level)
-        elif m := _INDENT.fullmatch(line):
+        if m := _INDENT.fullmatch(line):
             if int(m.group(1)) < 1:
                 raise DefException("indent must be 1 or more")
             self._indent = int(m.group(1))
@@ -164,14 +170,20 @@ class Execute:
             self._use(m.group(1).strip())
         elif m := _ARGUMENT.fullmatch(line):
             self._argument_name = m.group(1).strip()
-        elif m := _DEF.fullmatch(line):
-            self._define(m.group(1), pending)
-        elif m := _LANGUAGE.fullmatch(line):
-            self._language(m.group(1))
         elif m := _ERROR.fullmatch(line):
             self._error_message = m.group(1).strip()
             if not self.checking:
                 raise DefException(self._error_message)
+        elif self._statement(line):
+            pass
+        elif m := _ENTRY.fullmatch(line):
+            self._declare(m.group(1), (m.group(2) or "").strip())
+        elif (modifiers := self._modifiers(line))[0]:
+            return self._modified(modifiers[0], modifiers[1], level, pending)
+        elif (m := _DEFINITION.fullmatch(line)) and m.group(1) in self.kernel["language"]:
+            self._define(m.group(1), m.group(2), m.group(3), pending)
+        elif self.reloading:
+            return None, True  # an expression: it doesn't run again
         elif self.checking:
             from deflang.check import check_line
             check_line(self, line)
@@ -180,49 +192,153 @@ class Execute:
             return self._parser.parse(line).evaluate(self), False
         return None, True
 
-    def _language(self, name: str):
-        """`language NAME`: the indented Python below runs the bodies of `def NAME ...`.
-        It gets `BODY` (the def's body text), `VAR` (the argument values) and
-        `fill(BODY, values)` (puts values where A0, A1, ... are) and returns the def's value."""
-        if name == "python":
-            return  # built in; the core library declares it too, to document it
-        runner = Definition(f"language {name}", language="python", is_language=True)
-        self.languages[name] = runner
-        self._current_def = runner
+    # ------------------------------------------------------------ the kernel's entries
 
-    def _define(self, rest: str, pending: Optional[Definition]):
-        flags = set()
-        language = None
-        while True:
-            if m := _DEF_FLAG.match(rest):
-                flags.add(" ".join(m.group(1).split()))
-            elif language is None and (m := _WORD.match(rest)) and m.group(1) in self.languages:
-                language = m.group(1)
-                flags.add(language)
-            else:
-                break
-            rest = rest[m.end():]
+    def _declare(self, kind: str, name: str):
+        """`language html`, `modifier internal`, ...: a new entry; its fields follow."""
+        if not re.fullmatch(r"[\w-]+", name):
+            raise DefException(f"an entry is its kind and a one-word name, like `{kind} {'html' if kind == 'language' else 'name'}`, with its fields below")
+        file = self._import_files[-1] if self._import_files else None
+        old = self.kernel[kind].get(name)
+        if old is not None and (old.built_in or old.file != file):
+            where = "built in" if old.built_in else f"declared in {old.file.name if old.file else 'the program'}"
+            raise DefException(f"{kind} {name} is there already ({where})")
+        entry = kernels.Entry(kind, name, file=file, line=self._line_number)
+        self.kernel[kind][name] = entry
+        self._current_entry = entry
+
+    def _entry_line(self, entry, line: str):
+        """A line under an entry: a field one level in, or `does`'s Python further in."""
+        expanded = self._expand_tabs(line)
+        width = len(expanded) - len(expanded.lstrip())
+        if entry.reading_does and width > self._indent:
+            entry.does.add_line(expanded, self._argument_name)
+            return None
+        text = line.strip()
+        if text.startswith(self._comment):
+            return None
+        entry.reading_does = False
+        if width != self._indent:
+            raise DefException(f"the fields of {entry.kind} {entry.name} are one level in: {text}")
+        names = sorted(kernels.FIELDS[entry.kind], key=len, reverse=True)
+        found = next((name for name in names if text == name or text.startswith(name + " ")), None)
+        if found is None:
+            raise DefException(f"{entry.kind} {entry.name} has no field '{text.split()[0]}' (its fields are: {', '.join(sorted(kernels.FIELDS[entry.kind]))})")
+        value = text[len(found):].strip()
+        if found == "does":
+            if value:
+                raise DefException(f"`does` is followed by its Python, one level in, not on its line: does {value}")
+            entry.does = Definition(f"{entry.kind} {entry.name}", language="python", is_language=entry.kind == "language", file=entry.file)
+            entry.reading_does = True
+        elif found == "words":
+            entry.words = Definition(value, as_written=True, language="python", file=entry.file)
+            entry.words.add_patterns(value, self._argument_name)
+        elif found == "applies to" and value not in kernels.APPLIES_TO:
+            raise DefException(f"a modifier applies to {' or '.join(kernels.APPLIES_TO)}, not {value}")
+        entry.fields[found] = value
+        return None
+
+    def _do(self, entry, *arguments):
+        """Run an entry's `does`."""
+        if entry.does is None or not entry.does.body:
+            raise DefException(f"{entry.kind} {entry.name} has no `does`: write its Python under it, one level in")
+        try:
+            return entry.does.function(kernels.PARAMETERS[entry.kind])(self, *arguments)
+        except DefException:
+            raise
+        except Exception as error:
+            raise DefException(f"in {entry.kind} {entry.name}: {type(error).__name__}: {error}")
+
+    def _statement(self, line: str) -> bool:
+        """A statement a library declared (`statement NAME` with `words`): run it."""
+        for entry in self.kernel["statement"].values():
+            if entry.words is not None and (found := entry.words.matches(line)):
+                self._do(entry, found[0].arguments)
+                return True
+        return False
+
+    def _modifiers(self, line: str):
+        """The modifiers in front of a line, and the rest: ([entries], rest)."""
+        modifiers, rest = [], line
+        while (m := _WORD.fullmatch(rest)) and m.group(1) in self.kernel["modifier"]:
+            modifiers.append(self.kernel["modifier"][m.group(1)])
+            rest = m.group(2)
+        return modifiers, rest
+
+    def _modified(self, modifiers: list, rest: str, level: int, pending):
+        """`internal def ...` (modifiers of a definition) or `shared visits is 0` (of a name):
+        each modifier's `does` gets what it modifies; a name's line then runs as usual."""
+        definition_line = (m := _DEFINITION.fullmatch(rest)) and m.group(1) in self.kernel["language"]
+        wanted = "definition" if definition_line else "name"
+        for entry in modifiers:
+            if entry.fields.get("applies to", "name") != wanted:
+                example = f"{entry.name} def ..." if wanted == "name" else f"{entry.name} visits is 0"
+                raise DefException(f"{entry.name} applies to a {entry.fields.get('applies to', 'name')}: {example}")
+        if definition_line:
+            definition = self._define(m.group(1), m.group(2), m.group(3), pending)
+            for entry in modifiers:
+                self._do(entry, definition)
+            return None, True
+        name = re.match(r"[\w-]+", rest).group(0)
+        for entry in modifiers:
+            self._do(entry, name)
+        if rest.strip() != name and not self.reloading:
+            return self._line(rest, level)  # the rest is an ordinary line
+        return None, True
+
+    def _flags(self, text: Optional[str], language) -> dict:
+        """`[written, regex]`: the flags of a definition, {name: value or None}."""
+        if text is None:
+            return {}
+        inner = text[1:-1].strip()
+        if not inner:
+            raise DefException(f"no flags in {language.name}[]: leave the brackets out")
+        flags = {}
+        for item in inner.split(","):
+            name, _, value = item.strip().partition(" ")
+            entry = self.kernel["flag"].get(name)
+            if entry is None:
+                raise DefException(f"unknown flag '{name}' (the flags are: {', '.join(sorted(self.kernel['flag']))})")
+            if not language.accepts(name):
+                raise DefException(f"{language.name} takes no flag '{name}'")
+            takes = entry.fields.get("takes")
+            if takes and not value.strip():
+                raise DefException(f"flag {name} takes a {takes}: {language.name}[{name} VALUE]")
+            if not takes and value.strip():
+                raise DefException(f"flag {name} takes no value: {language.name}[{name}]")
+            flags[name] = value.strip() or None
+        return flags
+
+    def _define(self, language: str, flag_text: Optional[str], pattern: str, pending: Optional[Definition]) -> Definition:
+        """`def say A0`, `python[written] repeat A0 times : A1`: a definition, whose body
+        is the indented lines below it. Several definition lines in a row share one body."""
+        entry = self.kernel["language"][language]
+        flags = self._flags(flag_text, entry)
+        body_language = None if language == "def" else language
 
         if pending is not None and not pending.body and not pending.is_language:
-            # another way to write the def above: they share one body
-            first = {name for name, on in [("as written", pending.as_written),
-                                           ("regex", pending.regex)] if on} | ({pending.language} if pending.language else set())
-            if flags and flags != first:
-                raise DefException(f"a def group's lines must have the flags of its first line ({', '.join(sorted(first)) or 'none'}): def {rest}")
-            pending.add_patterns(rest.strip(), self._argument_name)
+            # another way to write the definition above: they share one body
+            if pending.language != body_language or pending.flags != flags:
+                raise DefException(f"a group's definition lines must have the language and flags of its first line: {language}{flag_text or ''} {pattern}")
+            pending.add_patterns(pattern.strip(), self._argument_name)
             self._current_def = pending
-            return
+            return pending
 
         definition = Definition(
-            rest.strip(),
-            as_written="as written" in flags,
+            pattern.strip(),
+            as_written="written" in flags,
             regex="regex" in flags,
-            language=language,
+            language=body_language,
             file=self._import_files[-1] if self._import_files else None,
         )
-        definition.add_patterns(rest.strip(), self._argument_name)
+        definition.flags = flags
+        definition.add_patterns(pattern.strip(), self._argument_name)
         self.definitions.append(definition)
         self._current_def = definition
+        for name, value in flags.items():
+            if not self.kernel["flag"][name].built_in:
+                self._do(self.kernel["flag"][name], definition, value)
+        return definition
 
     def _use(self, text: str):
         """`use FILE` runs a file once. `use NAMES from FILE` also gives this file the shared
@@ -270,6 +386,7 @@ class Execute:
         skipping = False
         try:
             for number, line in enumerate(lines, start=1):
+                self._line_number = number
                 if skipping and (not line.strip() or line[0].isspace()):
                     continue  # the body of a line that had an error
                 skipping = False
@@ -286,9 +403,11 @@ class Execute:
                 if self._current_def is not None and id(self._current_def) not in started:
                     started[id(self._current_def)] = (self._current_def, number)
             if self.checking:
-                from deflang.check import check_bodies
+                from deflang.check import check_bodies, check_entries
                 check_bodies(self, path, started.values())
+                check_entries(self, path)
         finally:
+            self._current_entry = None
             self._import_dirs.pop()
             self._import_files.pop()
             self._argument_name, self._comment, self._indent, self._answers, self.variables = saved
@@ -306,35 +425,24 @@ class Execute:
         return changed
 
     def reload(self, path: Path):
-        """Read a changed file's defs again, in place of its old ones. Only the defs and
-        `use` lines, and which names are `shared`: its other lines (like the `is 0` of
-        `shared visits is 0`) don't run again. A newly used file
+        """Read a changed file's defs again, in place of its old ones. Only what defines
+        runs again: statements, entries, definitions and modifiers; not its expressions,
+        nor the rest of a modifier's line (the `is 0` of `shared visits is 0`). A newly used file
         (like the css library) is loaded; one already loaded is skipped, as always. If
         the new file has an error, the old defs stay."""
-        lines = []
-        in_def = False
-        for line in path.read_text().splitlines():
-            top = line.rstrip()
-            if (m := _SHARED.fullmatch(top)) is not None:
-                in_def = False
-                lines.append(f"shared {m.group(1)}")  # not its value again
-            elif _DEF.fullmatch(top) or _ARGUMENT.fullmatch(top) or _COMMENT.fullmatch(top) or _INDENT.fullmatch(top) or _USE.fullmatch(top):
-                in_def = bool(_DEF.fullmatch(top))
-                lines.append(line)
-            elif in_def and (not line.strip() or line[0].isspace()):
-                lines.append(line)
-            else:
-                in_def = False
-                lines.append("")  # keeps the line numbers of errors right
+        lines = path.read_text().splitlines()
         old = [d for d in self.definitions if d.file == path]
         where = self.definitions.index(old[0]) if old else len(self.definitions)
         before = self.definitions
         self.definitions = [d for d in before if d.file != path]
+        self.reloading = True
         try:
             self._read(path, lines)
         except BaseException:
             self.definitions = before
             raise
+        finally:
+            self.reloading = False
         new = [d for d in self.definitions if d.file == path]
         rest = [d for d in self.definitions if d.file != path]
         # in the same place as before, so which def binds looser stays the same
@@ -372,13 +480,13 @@ class Execute:
         try:
             if definition.language is None:
                 return self._run_body(definition, arguments)
-            runner = self.languages[definition.language]
-            if runner is BUILT_IN_PYTHON:
+            if definition.language == "python":
                 return definition.function()(self, arguments)
-            if not runner.body:
-                raise DefException(f"language {definition.language} has no body: indent the Python that runs it below `language {definition.language}`")
+            entry = self.kernel["language"].get(definition.language)
+            if entry is None or entry.does is None or not entry.does.body:
+                raise DefException(f"language {definition.language} has no `does`: write the Python that runs it under `does`, one level in")
             fill = lambda body, values: SLOT_REGEX.sub(lambda m: str(values[int(m.group(1))]), body)
-            result = runner.function("self, BODY, VAR, fill")(self, "\n".join(definition.lines()), arguments, fill)
+            result = entry.does.function(kernels.PARAMETERS["language"])(self, "\n".join(definition.lines()), arguments, fill)
             # what a language makes is code, which another language puts in unescaped
             return Code(result) if isinstance(result, str) else result
         except DefException:

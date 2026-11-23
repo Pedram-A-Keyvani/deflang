@@ -17,7 +17,7 @@ covers the language and its interpreter.
 2. [Lines and Statements](#2-lines-and-statements)
 3. [Values](#3-values)
 4. [Defs](#4-defs)
-5. [Flags](#5-flags)
+5. [Flags, Languages and Modifiers](#5-flags-languages-and-modifiers)
 6. [Variables](#6-variables)
 7. [How a Line Is Read](#7-how-a-line-is-read)
 8. [Programs and Libraries](#8-programs-and-libraries)
@@ -63,13 +63,13 @@ def-lang setup --global-folder GLOBAL
 ### 1.2 Hello, World!
 
 A program is a folder with a `main.def`. The interpreter knows no words like `say`:
-a program makes its own with `def`.
+a program makes its own with definitions.
 
 <a id="listing-1-1"></a>
 **Listing 1-1:** `hello/main.def`
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
 say "Hello, world!"
@@ -87,7 +87,7 @@ It prints:
 Hello, world!
 ```
 
-- `def python say A0` makes the word `say`, with a body written in Python.
+- `python say A0` makes the word `say`, with a body written in Python.
 - `A0` is what stands after `say` on the line.
 
 ### 1.3 The Console
@@ -111,7 +111,9 @@ def-lang
 | empty | nothing |
 | starts with the comment marker | a comment |
 | a statement | run by the interpreter itself |
-| indented, right after a `def` | the def's body |
+| an entry: `language`, `flag`, `modifier` or `statement`, then a name | declares one ([chapter 5](#5-flags-languages-and-modifiers)) |
+| a definition: a language (`def`, `python`, …), then its pattern | makes one ([chapter 4](#4-defs)) |
+| indented, right after a definition or an entry | its body, or its fields |
 | indented, not a def body | runs only if the line it belongs to left `self.answer` `True` ([2.2](#22-indentation)) |
 | anything else | an expression: read into a tree of defs, then run |
 
@@ -122,17 +124,17 @@ A tab is always one level. A width that isn't a whole number of levels is an err
 
 | An indented line… | Is |
 |---|---|
-| right after a `def` or `language` line | the body: it ends at the next line of level 0 |
+| right after a definition line, or an entry | the body, or the entry's fields: it ends at the next line of level 0 |
 | anywhere else | it belongs to the last line one level up, and runs only if that line ran and left `self.answer` `True` |
 
 <a id="listing-2-1"></a>
 **Listing 2-1**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python A0 > A1 ?
+python A0 > A1 ?
     self.answer = number(A0) > number(A1)
 
 def greet A0
@@ -157,13 +159,13 @@ yes
 **Listing 2-2**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python A0 > A1 ?
+python A0 > A1 ?
     self.answer = number(A0) > number(A1)
 
-def python otherwise ?
+python otherwise ?
     self.answer = not self.answer
 
 indent 2
@@ -191,19 +193,16 @@ c
 
 ### 2.3 Statements
 
-The interpreter's only words:
+The statements the interpreter knows (a library can add more, [5.5](#55-statements-and-flags-of-your-own)):
 
 | Statement | Does |
 |---|---|
-| `def [FLAGS] PATTERN` | makes a def ([chapter 4](#4-defs)) |
 | `use NAME` | runs `NAME.def`, or a library, once ([chapter 8](#8-programs-and-libraries)) |
 | `use NAMES from NAME` | the same, and this file gets `NAME`'s shared variables `NAMES` ([chapter 6](#6-variables)) |
 | `use NAME as OTHER from FILE` | the same as `use NAME from FILE`, but this file calls it `OTHER` |
 | `comment is X` | lines starting with `X` are comments |
 | `argument is X` | arguments are written `X0`, `X1`, … |
 | `indent N` | `N` spaces make one level ([2.2](#22-indentation)) |
-| `shared NAME` | in this file, `NAME` is the shared variable; the rest of the line runs as usual ([chapter 6](#6-variables)) |
-| `language NAME` | makes a language ([chapter 5](#5-flags)) |
 | `error MESSAGE` | stops with `MESSAGE` |
 | `` `LINE` `` | prints `LINE`, then runs it |
 
@@ -213,7 +212,7 @@ The interpreter's only words:
 **Listing 2-3**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
 comment is #
@@ -244,13 +243,13 @@ done
 **Listing 3-1**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 x is 2 + 3
@@ -271,9 +270,15 @@ say x
 ## 4. Defs
 
 ```
-def PATTERN
+LANGUAGE[FLAGS] PATTERN
     BODY
 ```
+
+- **The language** says what the body is written in: `def` is def-lang, `python` is
+  Python, and others are declared ([5.3](#53-languages)).
+- **The flags** come right after it, in brackets, and are optional
+  ([chapter 5](#5-flags-languages-and-modifiers)).
+- **The pattern** comes after a space; it can start with any word, or with `[`.
 
 ### 4.1 Patterns and Arguments
 
@@ -294,11 +299,11 @@ answer every time.
 **Listing 4-1**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
 argument is X
-def python X0 times X1
+python X0 times X1
     return number(X0) * number(X1)
 
 say 2 times 3
@@ -317,10 +322,10 @@ say 2 times 3
 **Listing 4-2**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 def A0 doubled
@@ -342,10 +347,10 @@ say 4 doubled
 **Listing 4-3**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python half of A0
+python half of A0
     return number(A0) / 2
 
 say half of 9
@@ -356,7 +361,7 @@ say half of 9
 ```
 
 - The body is a Python function; `return` gives the def's value.
-- It gets `self` (the interpreter) and the arguments ([Appendix C](#c-the-python-api)).
+- It gets `self` (the interpreter) and the arguments ([Appendix D](#d-the-python-api)).
 
 ### 4.4 Several Patterns, One Body
 
@@ -364,10 +369,10 @@ say half of 9
 **Listing 4-4**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 def A0 plus A1
@@ -381,8 +386,8 @@ say the sum of 2 and 3
 5
 ```
 
-- `def` lines in a row share the body below them.
-- Flags go on the first line; every line of the group has the same flags.
+- Definition lines in a row share the body below them.
+- Every line of the group has the same language and flags.
 
 ### 4.5 Restricted Arguments
 
@@ -390,13 +395,13 @@ say the sum of 2 and 3
 **Listing 4-5**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
-def python as written (A0: one|two|three)
+python[written] (A0: one|two|three)
     return ["one", "two", "three"].index(A0) + 1
 
 say two + three
@@ -417,18 +422,18 @@ say two + three
 **Listing 4-6**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
-def python A0 "A1" A2
-def python "A0" A1
-def python A0 "A1"
+python A0 "A1" A2
+python "A0" A1
+python A0 "A1"
     return "".join(as_text(value) for value in a)
 
 x is 2 + 3
@@ -446,11 +451,13 @@ x = 5
 
 ---
 
-## 5. Flags
+## 5. Flags, Languages and Modifiers
 
-Written right after `def`, before the pattern.
+**Flags** are written in brackets right after the language, before the pattern:
+`def[written] …`, several with commas: `python[written, regex] …`. They say how one
+definition works. A flag is always written out, never a variable.
 
-### 5.1 `as written`
+### 5.1 `written`
 
 The def gets its arguments as they are written, not their values.
 
@@ -458,10 +465,10 @@ The def gets its arguments as they are written, not their values.
 **Listing 5-1**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written twice : A0
+python[written] twice : A0
     self.run(A0)
     self.run(A0)
 
@@ -477,7 +484,7 @@ Use it when the def needs the **words** of an argument:
 
 - a name to store under (`A0 is A1` in [Listing 3-1](#listing-3-1));
 - code to run later, many times, or maybe not at all ([Listing 5-1](#listing-5-1));
-- a word itself ([Listing 4-5](#listing-4-5): without `as written`, `two`'s value would be read
+- a word itself ([Listing 4-5](#listing-4-5): without `written`, `two`'s value would be read
   with the same def again, and again).
 
 ### 5.2 `regex`
@@ -488,10 +495,10 @@ The pattern is a raw regex; ` or ` splits alternatives.
 **Listing 5-2**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python regex (A0: \d+)% or (A0: \d+) percent
+python[regex] (A0: \d+)% or (A0: \d+) percent
     return number(A0) / 100
 
 say 50 percent
@@ -503,20 +510,21 @@ say 50 percent
 
 ### 5.3 Languages
 
-`language NAME` makes `NAME` a flag. The Python below it runs the bodies of those
-defs.
+`language NAME` declares a language: an **entry**, with its fields one level in.
+Definitions then start with `NAME`, and the Python under `does` runs their bodies.
 
 <a id="listing-5-3"></a>
 **Listing 5-3**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
 language upper
-    return fill(BODY, [as_text(value) for value in VAR]).upper()
+    does
+        return fill(BODY, [as_text(value) for value in VAR]).upper()
 
-def upper greeting for A0
+upper greeting for A0
     hello A0, how are you?
 
 say greeting for "sam"
@@ -526,10 +534,76 @@ say greeting for "sam"
 HELLO SAM, HOW ARE YOU?
 ```
 
-- The Python gets `BODY` (the body text), `VAR` (the argument values) and
+- `does`'s Python gets `BODY` (the body text), `VAR` (the argument values) and
   `fill(BODY, values)` (puts values where `A0`, `A1`, … are).
-- `python` is built in.
+- More fields: `editor` (VS Code's language id, for coloring and formatting its
+  bodies) and `flags` (the flags it accepts, like `written, regex`; without it, none).
+- `def` and `python` are built in; they accept every flag.
 - What a language returns is `Code`: another language puts it in unescaped.
+- An entry's help is the comment lines right above it, like a def's description.
+
+### 5.4 Modifiers
+
+A modifier is a word in front of a line that changes where something is seen. It is
+an entry too, with `applies to`: `definition` or `name`.
+
+<a id="listing-5-4"></a>
+**Listing 5-4**
+
+```
+python say A0
+    self.say(A0)
+
+// Valid only in its own file.
+modifier internal
+    applies to definition
+    does
+        TARGET.internal = True
+
+internal python A0 halved
+    return number(A0) / 2
+
+say 9 halved
+```
+
+```console
+4.5
+```
+
+- `does` gets `TARGET`: the definition, or the name, it modifies.
+- An `internal` def is seen only by its own file: its lines, and its other defs (also
+  when another file calls them). Other files don't see it.
+- A modifier that applies to a name, like `shared` ([6.3](#63-shared)), is followed by
+  the rest of an ordinary line: `shared visits is 0`.
+- Modifiers stack: `internal shared …` applies each in turn.
+
+### 5.5 Statements and Flags of Your Own
+
+<a id="listing-5-5"></a>
+**Listing 5-5**
+
+```
+python say A0
+    self.say(A0)
+
+// Says hello.
+statement greet
+    words greet A0
+    does
+        self.say("hello " + a[0].strip())
+
+greet Sam
+```
+
+```console
+hello Sam
+```
+
+- A statement's `words` are written like a pattern; `does` gets them as `a[0]`,
+  `a[1]`, …, as they are written.
+- `flag NAME` declares a flag; `takes` says the kind of its value (`def[cache 60]`),
+  and `does` gets `TARGET` (the definition) and `VALUE`.
+- An entry is declared once; only the file that declared it can declare it again.
 
 ---
 
@@ -543,7 +617,8 @@ From the smallest scope to the largest:
 | the file's | setting it outside any def | that file's lines and its defs |
 | shared | `shared NAME` | the file that made it, and the files that say `use NAME from FILE` |
 
-Variables don't follow indentation ([2.2](#22-indentation)).
+Variables don't follow indentation ([2.2](#22-indentation)). `shared` is a modifier
+([5.4](#54-modifiers)): the core library declares it, and so does Listing 6-3.
 
 ### 6.1 A Def's Own
 
@@ -551,13 +626,13 @@ Variables don't follow indentation ([2.2](#22-indentation)).
 **Listing 6-1**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 def total of A0 and A1
@@ -573,7 +648,7 @@ say total of 2 and 3
 
 - `sum` is the def call's own: it is gone when the call ends.
 - Each call has its own: a def that calls itself doesn't share them.
-- An `as written` def has none: it runs the caller's words where they were written,
+- A `written` def has none: it runs the caller's words where they were written,
   with the caller's variables.
 
 ### 6.2 The File's
@@ -582,13 +657,13 @@ say total of 2 and 3
 **Listing 6-2**
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 rate is 2
@@ -614,8 +689,14 @@ say 4 plus the rate
 **Listing 6-3:** `counter.def`
 
 ```
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
+
+// One variable for the whole program.
+modifier shared
+    applies to name
+    does
+        self.share(TARGET)
 
 shared visits is 0
 ```
@@ -624,13 +705,13 @@ shared visits is 0
 **Listing 6-4:** `main.def`, next to `counter.def`
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 use visits from counter
@@ -656,13 +737,13 @@ say visits
 **Listing 6-5:** `main.def`, next to `counter.def`
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
 use visits as total from counter
@@ -702,41 +783,41 @@ line decides which one wraps the others.
 **Listing 7-1:** the defs the rules below use, made in this order
 
 ```
-def python say A0
+python say A0
     self.say(A0)
 
-def python A0 ?
+python A0 ?
     self.answer = bool(A0)
 
-def python as written A0 is A1
+python[written] A0 is A1
     self.variables[A0] = self.run(A1)
 
-def python as written keep A0 is A1
+python[written] keep A0 is A1
     self.share(A0.strip())
     self.variables[A0.strip()] = self.run(A1)
 
-def python as written A0 if A1 otherwise A2
+python[written] A0 if A1 otherwise A2
     return self.run(A0) if self.run(A1) else self.run(A2)
 
-def python as written repeat A0 times : A1
+python[written] repeat A0 times : A1
     for _ in range(number(self.run(A0))):
         self.run(A1)
 
-def python as written all of A0 are A1
+python[written] all of A0 are A1
     return all(self.run(as_code(item) + " " + A1) for item in self.run(A0))
 
-def python A0 "A1" A2
-def python "A0" A1
-def python A0 "A1"
+python A0 "A1" A2
+python "A0" A1
+python A0 "A1"
     return "".join(as_text(value) for value in a)
 
-def python A0 > A1
+python A0 > A1
     return number(A0) > number(A1)
 
-def python A0 + A1
+python A0 + A1
     return number(A0) + number(A1)
 
-def python count of A0
+python count of A0
     return len(A0)
 ```
 
@@ -744,7 +825,7 @@ def python count of A0
 |---|---|---|---|
 | 1 | A match whose fixed words are all part of a longer match loses | `keep visits is 0` | `keep A0 is A1`, not `A0 is A1` |
 | 2 | **Brackets:** a def whose fixed words surround another's wraps it | `"big" if 5 > 3 otherwise "small"` | `if … otherwise` wraps `>` |
-| 3 | **Sentences:** an `as written` def that starts the line with two or more fixed words wraps what follows them | `repeat 3 times: x is x + 1` | `repeat` wraps `is` |
+| 3 | **Sentences:** a `written` def that starts the line with two or more fixed words wraps what follows them | `repeat 3 times: x is x + 1` | `repeat` wraps `is` |
 | 4 | **Word lists:** a def with no fixed words that matches the whole text is one value | `two` ([Listing 4-5](#listing-4-5)) | the word list |
 | 5 | **Order:** otherwise, the def made first wraps | `x is 2 + 3 > 4` | `x is ((2 + 3) > 4)` |
 | 6 | **No value:** a reading with an argument that can't be a value (an unknown name) loses to the next one | `count of "abc"` | `count of A0`, not `count of` joined with `"abc"` |
@@ -810,7 +891,7 @@ shapes = { from = "my-libraries/shapes", link = true }
   another, and `$DEFLANG_GLOBAL` sets one for a single run.
 - A library may have a `libraries.toml` too, with `from` only. A relative `from` is a
   folder of the same source: in `web/libraries.toml`,
-  `javascript = { from = "../language/javascript" }`. Those libraries are installed
+  `language = { from = "../language" }`. Those libraries are installed
   with it, the same way.
 
 ### 8.3 Installing
@@ -833,7 +914,7 @@ shapes = { from = "my-libraries/shapes", link = true }
 ## 9. Errors and Checking
 
 An error stops the program with its message; in a used file it starts with
-`FILE:LINE:`. All messages are listed in [Appendix D](#d-error-messages).
+`FILE:LINE:`. All messages are listed in [Appendix E](#e-error-messages).
 
 ```console
 def-lang check hello
@@ -841,14 +922,14 @@ def-lang check hello
 
 `check` reads a program without running it:
 
-- **runs:** `use`, `def`, `language`, `comment is`, `argument is`, and the defs
-  that call `self.alias`;
+- **runs:** the statements, the entries, the definitions and their modifiers, and
+  the defs that call `self.alias`;
 - **only reads:** every other line, so nothing is asked, printed or started;
 - **finds:** unknown names, files it can't find, a missing closing quote or `)`, an
   indented line with nothing to belong to, a Python syntax error in a body;
 - **doesn't find:** errors that only happen while running, like `expected a number`.
 
-Variable names come from the Python bodies: an `as written` argument that a body
+Variable names come from the Python bodies: a `written` argument that a body
 stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
 
 - `--json` prints the result as JSON.
@@ -862,15 +943,12 @@ stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
 
 | Statement | Scope |
 |---|---|
-| `def [FLAGS] PATTERN` | from here on, every file |
 | `use NAME` | runs once per program |
 | `use NAMES from NAME` | the names: to the end of the file |
 | `use NAME as OTHER from FILE` | `OTHER`: to the end of the file |
 | `comment is X` | to the end of the file; each file starts with `//` |
 | `argument is X` | to the end of the file; each file starts with `A` |
 | `indent N` | to the end of the file; each file starts with `4` |
-| `shared NAME` | to the end of the file |
-| `language NAME` | from here on, every file |
 | `error MESSAGE` | stops the program |
 | `` `LINE` `` | that line |
 
@@ -878,15 +956,27 @@ stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
 
 | Flag | Meaning |
 |---|---|
-| `as written` | the def gets its arguments as they are written, not their values |
-| `python`, or a `language` name | the body is written in that language |
+| `written` | the def gets its arguments as they are written, not their values |
 | `regex` | the pattern is a raw regex; ` or ` splits alternatives |
 
-### C. The Python API
+Written in brackets right after the language: `python[written, regex] …`.
+
+### C. Entries
+
+| Entry | Fields | Its `does` gets |
+|---|---|---|
+| `language NAME` | `does`, `editor`, `flags` | `BODY`, `VAR`, `fill` |
+| `modifier NAME` | `does`, `applies to` (`definition` or `name`) | `TARGET` |
+| `flag NAME` | `does`, `takes` | `TARGET`, `VALUE` |
+| `statement NAME` | `does`, `words` | `a`: its words |
+
+Every `does` also gets `self`, the interpreter.
+
+### D. The Python API
 
 | Name | Is |
 |---|---|
-| the argument names | `A0`, `A1`, …: the argument's value, or its words if the def is `as written` |
+| the argument names | `A0`, `A1`, …: the argument's value, or its words if the def is `written` |
 | `self.run(text)` | runs def-lang text and returns its value |
 | `self.say(value)` | prints a value |
 | `self.variables` | the variables of the running code: `self.variables["x"] = 5` |
@@ -910,7 +1000,7 @@ stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
 | `2.50` | `2.5` | `2.5` |
 | nothing | (empty) | `None` |
 
-### D. Error Messages
+### E. Error Messages
 
 | Message | Cause |
 |---|---|
@@ -921,9 +1011,14 @@ stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
 | `indented line with no line above it to belong to` | an indented line with no line one level up |
 | `indented line, but the line above it gave no answer` | the line one level up left `self.answer` `None` |
 | `indented N spaces, but indent is M` | a width that isn't a whole number of levels |
-| `a def group's lines must have the flags of its first line` | stacked `def` lines with different flags |
+| `a group's definition lines must have the language and flags of its first line` | definition lines in a row, with different languages or flags |
+| `unknown flag 'x'` | a flag that isn't declared |
+| `NAME takes no flag 'x'` | a language that doesn't accept that flag (its `flags` field) |
+| `KIND NAME has no field 'x'` | a field the kind doesn't have |
+| `KIND NAME is there already` | an entry declared again, by another file |
+| ``language NAME has no `does` `` | a definition in a language without its Python |
+| `NAME applies to a definition` (or `a name`) | a modifier in front of the wrong kind of line |
 | `syntax error in body of 'def …'` | the Python body doesn't compile |
-| `language NAME has no body` | `language NAME` with no indented Python below it |
 | `'…' never finishes (it keeps matching itself)` | a def whose value is read with the same def again |
 | `in '…': ERROR` | a Python error in a body |
 | `expected a number, got …` | `number(…)` of something that isn't a number |
@@ -931,7 +1026,7 @@ stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
 | `x has no shared variable 'n'` | `use n from x`, but `x` doesn't say `shared n` |
 | `` `as` is only for names `` | `as` after a file name, like `use core as c` |
 
-### E. The Interpreter's Files
+### F. The Interpreter's Files
 
 | File | Does |
 |---|---|
