@@ -193,7 +193,7 @@ class Execute:
         """Run a line of `level`. A line belongs to the last line one level up, and runs
         only if that line ran and left self["answer"] True. Before it runs, self["answer"]
         is the answer of the last line on its own level, so a def like `otherwise ?`
-        turns around its neighbour's answer, not a deeper line's."""
+        turns around its neighbor's answer, not a deeper line's."""
         answers = self._answers
         if level > len(answers):
             raise DefException(f"indented line with no line above it to belong to: {line}")
