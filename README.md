@@ -114,7 +114,7 @@ def-lang
 | an entry: `language`, `flag`, `modifier` or `statement`, then a name | declares one ([chapter 5](#5-flags-languages-and-modifiers)) |
 | a definition: a language (`def`, `python`, …), then its pattern | makes one ([chapter 4](#4-defs)) |
 | indented, right after a definition or an entry | its body, or its fields |
-| indented, not a def body | runs only if the line it belongs to left `self.answer` `True` ([2.2](#22-indentation)) |
+| indented, not a def body | runs only if the line it belongs to left `self["answer"]` `True` ([2.2](#22-indentation)) |
 | anything else | an expression: read into a tree of defs, then run |
 
 ### 2.2 Indentation
@@ -125,7 +125,7 @@ A tab is always one level. A width that isn't a whole number of levels is an err
 | An indented line… | Is |
 |---|---|
 | right after a definition line, or an entry | the body, or the entry's fields: it ends at the next line of level 0 |
-| anywhere else | it belongs to the last line one level up, and runs only if that line ran and left `self.answer` `True` |
+| anywhere else | it belongs to the last line one level up, and runs only if that line ran and left `self["answer"]` `True` |
 
 <a id="listing-2-1"></a>
 **Listing 2-1**
@@ -135,7 +135,7 @@ python say A0
     self.say(A0)
 
 python A0 > A1 ?
-    self.answer = number(A0) > number(A1)
+    self["answer"] = number(A0) > number(A1)
 
 def greet A0
     say "hello"
@@ -163,10 +163,10 @@ python say A0
     self.say(A0)
 
 python A0 > A1 ?
-    self.answer = number(A0) > number(A1)
+    self["answer"] = number(A0) > number(A1)
 
 python otherwise ?
-    self.answer = not self.answer
+    self["answer"] = not self["answer"]
 
 indent 2
 5 > 3 ?
@@ -184,7 +184,7 @@ c
 ```
 
 - A skipped line skips the lines below it.
-- Before a line runs, `self.answer` is the answer of the last line on its own level:
+- Before a line runs, `self["answer"]` is the answer of the last line on its own level:
   `otherwise ?` turns around `5 > 3 ?`, not `5 > 10 ?`.
 - Each def call has its own levels; the answer it leaves still comes out.
 - Empty lines and comment lines don't end a body. In a Python or other-language body,
@@ -247,7 +247,7 @@ python say A0
     self.say(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python A0 + A1
     return number(A0) + number(A1)
@@ -361,7 +361,7 @@ say half of 9
 ```
 
 - The body is a Python function; `return` gives the def's value.
-- It gets `self` (the interpreter) and the arguments ([Appendix D](#d-the-python-api)).
+- It gets `self` (the kernel, [Appendix D](#d-the-python-api)) and the arguments.
 
 ### 4.4 Several Patterns, One Body
 
@@ -426,7 +426,7 @@ python say A0
     self.say(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python A0 + A1
     return number(A0) + number(A1)
@@ -630,7 +630,7 @@ python say A0
     self.say(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python A0 + A1
     return number(A0) + number(A1)
@@ -661,7 +661,7 @@ python say A0
     self.say(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python A0 + A1
     return number(A0) + number(A1)
@@ -690,13 +690,14 @@ say 4 plus the rate
 
 ```
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 // One variable for the whole program.
 modifier shared
     applies to name
     does
-        self.share(TARGET)
+        here = self["file"]
+        self["files"][here]["names"][TARGET] = (here, TARGET)
 
 shared visits is 0
 ```
@@ -709,7 +710,7 @@ python say A0
     self.say(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python A0 + A1
     return number(A0) + number(A1)
@@ -741,7 +742,7 @@ python say A0
     self.say(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python A0 + A1
     return number(A0) + number(A1)
@@ -787,14 +788,15 @@ python say A0
     self.say(A0)
 
 python A0 ?
-    self.answer = bool(A0)
+    self["answer"] = bool(A0)
 
 python[written] A0 is A1
-    self.variables[A0] = self.run(A1)
+    self["variables"][A0] = self.run(A1)
 
 python[written] keep A0 is A1
-    self.share(A0.strip())
-    self.variables[A0.strip()] = self.run(A1)
+    here, name = self["file"], A0.strip()
+    self["files"][here]["names"][name] = (here, name)
+    self["variables"][name] = self.run(A1)
 
 python[written] A0 if A1 otherwise A2
     return self.run(A0) if self.run(A1) else self.run(A2)
@@ -923,14 +925,14 @@ def-lang check hello
 `check` reads a program without running it:
 
 - **runs:** the statements, the entries, the definitions and their modifiers, and
-  the defs that call `self.alias`;
+  the defs that change `self["aliases"]`;
 - **only reads:** every other line, so nothing is asked, printed or started;
 - **finds:** unknown names, files it can't find, a missing closing quote or `)`, an
   indented line with nothing to belong to, a Python syntax error in a body;
 - **doesn't find:** errors that only happen while running, like `expected a number`.
 
 Variable names come from the Python bodies: a `written` argument that a body
-stores under (`self.variables[A0]`, `self.share(A0, …)`) is a name.
+stores under (`self["variables"][A0]`) is a name.
 
 - `--json` prints the result as JSON.
 - `--text FILE` reads `FILE`'s text from stdin instead of the disk.
@@ -970,22 +972,36 @@ Written in brackets right after the language: `python[written, regex] …`.
 | `flag NAME` | `does`, `takes` | `TARGET`, `VALUE` |
 | `statement NAME` | `does`, `words` | `a`: its words |
 
-Every `does` also gets `self`, the interpreter.
+Every `does` also gets `self`, the kernel ([Appendix D](#d-the-python-api)).
 
 ### D. The Python API
+
+A Python body gets `self`, the kernel. What the interpreter has is its tree, read and
+changed as `self[...]`; what it does are its methods.
+
+| The tree | Is |
+|---|---|
+| `self["variables"]` | the variables of the running code: its def call's own, its file's, and the shared ones its file names: `self["variables"]["x"] = 5` |
+| `self["answer"]` | whether the lines one level below run: they run if it is `True`; `None` makes them an error. The only part that is set: `self["answer"] = True` |
+| `self["aliases"]` | `{phrase: words}`: `phrase` reads as `words`, longer phrases first |
+| `self["store"][NAME]` | a library's own state: a dict, made on first use |
+| `self["file"]` | the file running now |
+| `self["program"]` | the program's folder: `self["program"] / "data.txt"` |
+| `self["files"][FILE]` | a file's `"comment"`, `"argument"` and `"indent"` as read so far, its `"variables"`, and its `"names"`: the shared variables it uses, `{NAME: (FILE, NAME)}` |
+| `self["shared"]` | the shared variables' values: `{(FILE, NAME): value}` |
+| `self["definitions"]` | every definition, in the order made |
+| `self["language"]`, `self["flag"]`, `self["modifier"]`, `self["statement"]` | the entries: `self["language"]["python"]` |
+
+| Method | Does |
+|---|---|
+| `self.run(text)` | runs def-lang text and returns its value |
+| `self.say(value)` | prints a value |
+| `self.own_variables(file)` | in a `with` block, lines get variables of their own, on top of `file`'s (a web request) |
+| `self.changed_files()`, `self.reload(path)` | the files saved since they were read; reads one again, in place of its old defs |
 
 | Name | Is |
 |---|---|
 | the argument names | `A0`, `A1`, …: the argument's value, or its words if the def is `written` |
-| `self.run(text)` | runs def-lang text and returns its value |
-| `self.say(value)` | prints a value |
-| `self.variables` | the variables of the running code: `self.variables["x"] = 5` |
-| `self.share(name)` | what `shared NAME` does |
-| `self.answer` | whether the lines one level below run: they run if it is `True`; `None` makes them an error |
-| `self.alias(phrase, words)` | from now on, `phrase` reads as `words` (longer phrases first) |
-| `self.lookup(name)` | a variable's value, or an `unknown name` error |
-| `self.file_path(name)` | a file's path, relative to the program's folder |
-| `self.store(name)` | a dict for a library's own state: the same dict for the same name |
 | `number(value)` | the value as a number, or an error |
 | `parse_number(text)` | the text as a number, or `None` |
 | `as_text(value)` | the value as text a person reads (what `self.say` prints) |
@@ -1009,7 +1025,7 @@ Every `does` also gets `self`, the interpreter.
 | `missing ')' in: …` | a restricted argument with no closing bracket |
 | `invalid def pattern '…'` | a pattern that isn't a valid regex |
 | `indented line with no line above it to belong to` | an indented line with no line one level up |
-| `indented line, but the line above it gave no answer` | the line one level up left `self.answer` `None` |
+| `indented line, but the line above it gave no answer` | the line one level up left `self["answer"]` `None` |
 | `indented N spaces, but indent is M` | a width that isn't a whole number of levels |
 | `a group's definition lines must have the language and flags of its first line` | definition lines in a row, with different languages or flags |
 | `unknown flag 'x'` | a flag that isn't declared |

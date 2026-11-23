@@ -66,27 +66,19 @@ def as_code(value) -> str:
     return repr(value)
 
 
-class Shared:
-    """The program's shared variables. Each is (the file that made it, its name); a
-    file sees it under a name through `shared NAME` (its own) or `use NAME from FILE`."""
-
-    def __init__(self):
-        self.values = {}   # (file, name) -> value
-        self.names = {}    # file -> {the name it uses: (file, name)}
-        self.made = {}     # file -> the names it made shared
-
-    def bound(self, file) -> dict:
-        return self.names.setdefault(file, {})
-
-
 class Variables(MutableMapping):
     """The variables some lines see: a def call's own (if they run in one), then their
     file's, with the shared names the file uses. Setting a shared name the file uses
-    changes the shared one; any other name is the def call's own, or else the file's."""
+    changes the shared one; any other name is the def call's own, or else the file's.
 
-    def __init__(self, file, files: dict, shared: Shared, own: Optional[dict] = None):
+    `place` is the file's place in the kernel (kernel["files"][FILE]): its "variables",
+    and its "names", the shared variables it uses: {NAME: (FILE, NAME)}. `shared` is
+    kernel["shared"], their values: {(FILE, NAME): value}."""
+
+    def __init__(self, file, place: dict, shared: dict, own: Optional[dict] = None):
         self.file = file
-        self.mine = files.setdefault(file, {})
+        self.mine = place["variables"]
+        self.names = place["names"]
         self.shared = shared
         self.own = own
 
@@ -94,18 +86,18 @@ class Variables(MutableMapping):
         """The shared variable `name` means in this file, or None."""
         if self.own and name in self.own:
             return None
-        return self.shared.bound(self.file).get(name)
+        return self.names.get(name)
 
     def __getitem__(self, name):
         if self.own is not None and name in self.own:
             return self.own[name]
         if (key := self._key(name)) is not None:
-            return self.shared.values[key]
+            return self.shared[key]
         return self.mine[name]
 
     def __setitem__(self, name, value):
         if (key := self._key(name)) is not None:
-            self.shared.values[key] = value
+            self.shared[key] = value
         elif self.own is not None:
             self.own[name] = value
         else:
@@ -115,12 +107,12 @@ class Variables(MutableMapping):
         if self.own is not None and name in self.own:
             del self.own[name]
         elif (key := self._key(name)) is not None:
-            del self.shared.values[key]
+            del self.shared[key]
         else:
             del self.mine[name]
 
     def _all(self) -> dict:
-        used = {n: self.shared.values[k] for n, k in self.shared.bound(self.file).items() if k in self.shared.values}
+        used = {n: self.shared[k] for n, k in self.names.items() if k in self.shared}
         return {**self.mine, **used, **(self.own or {})}
 
     def __iter__(self):

@@ -1,9 +1,19 @@
-"""The kernel: one tree with an entry for every language, flag, modifier and statement.
+"""The kernel: one tree with an entry for every language, flag, modifier and statement,
+and everything else the interpreter has. A Python body reads and changes it as self[...]:
 
-    kernel["language"]["html"]     how a body runs
-    kernel["flag"]["written"]      how one definition works
-    kernel["modifier"]["internal"] where something is visible
-    kernel["statement"]["comment"] a whole line the reader knows
+    kernel["language"]["html"]     how a body runs (and "flag", "modifier", "statement")
+    kernel["definitions"]          every definition, in the order made
+    kernel["aliases"]              {phrase: words}: what `X means Y` adds
+    kernel["files"][PATH]          a file's "comment", "argument", "indent", "variables",
+                                   and "names": the shared variables it uses
+    kernel["shared"]               {(FILE, NAME): value}: the shared variables' values
+    kernel["variables"]            what the running code sees (see values.Variables)
+    kernel["file"]                 the file running now
+    kernel["program"]              the program's folder
+    kernel["answer"]               the last question's answer
+    kernel["store"]["web"]         a library's own state, made on first use
+
+What the interpreter does stays a method: self.run(text), self.say(value).
 
 A file declares an entry with its kind and a one-word name, and its fields one level in:
 
@@ -40,6 +50,17 @@ FIELDS = {
 
 APPLIES_TO = ("definition", "name")
 
+# the keys of the tree that change with what runs; the rest are kept in one dict
+RUNNING = ("definitions", "variables", "file", "program", "answer")
+DEFAULT_COMMENT, DEFAULT_ARGUMENT, DEFAULT_INDENT = "//", "A", 4
+
+
+def new_place() -> dict:
+    """A file's place in the kernel, kernel["files"][PATH]: its settings as read so far
+    (each file starts with them), its variables, and the shared variables it names."""
+    return {"comment": DEFAULT_COMMENT, "argument": DEFAULT_ARGUMENT, "indent": DEFAULT_INDENT,
+            "variables": {}, "names": {}}
+
 
 @dataclass
 class Entry:
@@ -62,8 +83,10 @@ class Entry:
 
 
 def built_in() -> dict:
-    """The kernel a program starts with."""
+    """The kernel a program starts with (the keys that don't change with what runs)."""
+    from collections import defaultdict
     kernel = {kind: {} for kind in KINDS}
+    kernel.update(aliases={}, files={}, shared={}, store=defaultdict(dict))
     for name in ("def", "python"):
         kernel["language"][name] = Entry("language", name, built_in=True)
     for name in ("written", "regex"):

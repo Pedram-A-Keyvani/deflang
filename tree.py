@@ -32,7 +32,7 @@ class Name:
     name: str
 
     def evaluate(self, engine: "Execute"):
-        return engine.lookup(self.name)
+        return engine._lookup(self.name)
 
 
 @dataclass
@@ -166,7 +166,7 @@ class Parser:
         for argument in arguments:
             if isinstance(argument, Call) and argument.lost:
                 return True
-            if isinstance(argument, Name) and argument.name not in self.engine.variables:
+            if isinstance(argument, Name) and argument.name not in self.engine._variables:
                 try:
                     ast.literal_eval(argument.name)
                 except (ValueError, SyntaxError):
@@ -188,7 +188,7 @@ class Parser:
         """
         definitions = self.engine.definitions
         # an internal def is seen only by the lines of its own file
-        here = self.engine.variables.file
+        here = self.engine._variables.file
         candidates: List[Match] = [m for d in definitions if not d.internal or d.file == here for m in d.matches(text)]
         if not candidates:
             return []

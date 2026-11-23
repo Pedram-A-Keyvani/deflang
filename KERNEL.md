@@ -1,6 +1,6 @@
 # The kernel: a design
 
-A design to review before any code. Nothing here is built yet.
+The design, reviewed. Steps 1 to 3 are built (section 6); step 4 is for later, if wanted.
 
 **The goal.** The interpreter keeps one tree, the **kernel**, with an entry for every
 language, flag, modifier and statement. Libraries add entries, so the interpreter's own
@@ -61,20 +61,31 @@ internal     def[written]  repeat A0 times : A1
 
 ## 2. The tree
 
+A Python body gets the kernel as `self`, and reads and changes the tree as `self[...]`:
+
 ```
 kernel = {
-  "language":  { NAME: entry },      # languages: how a body runs
-  "flag":      { NAME: entry },      # how one definition works
-  "modifier":  { NAME: entry },      # where something is visible
-  "statement": { NAME: entry },      # whole lines the reader knows
-  "file":      { PATH: {"comment": "//", "argument": "A", "indent": 4} },
-  "state":     {"files": {PATH: {name: value}}, "shared": {(PATH, name): value}},
+  "language":    { NAME: entry },    # languages: how a body runs
+  "flag":        { NAME: entry },    # how one definition works
+  "modifier":    { NAME: entry },    # where something is visible
+  "statement":   { NAME: entry },    # whole lines the reader knows
   "definitions": [definition, ...],  # in the order they were made: it decides reading
-  "aliases":   [...],                # X means Y
-  "run":       <run one line>,
-  "read":      <read one file>,
+  "aliases":     { phrase: words },  # X means Y
+  "files":       { PATH: {"comment": "//", "argument": "A", "indent": 4,
+                          "variables": {name: value},
+                          "names": {NAME: (FILE, NAME)}} },  # the shared ones it uses
+  "shared":      { (FILE, NAME): value },
+  "variables":   the running code's: its def call's own, its file's, its shared names
+  "file":        the file running now
+  "program":     the program's folder
+  "answer":      the last question's answer
+  "store":       { LIBRARY: {...} },  # a library's own state, made on first use
 }
 ```
+
+What the interpreter does stays a method: `self.run(text)`, `self.say(value)`, and for
+a web server `self.own_variables(file)`, `self.changed_files()`, `self.reload(path)`.
+Only `self["answer"]` is set; every other part is changed in place.
 
 **An entry** is declared in a `.def` file, the same way in every kind: the kind and a
 one-word name, then its fields one level in. Its help is the comment lines right above
@@ -119,7 +130,7 @@ statement comment
   | `takes` | a flag | the kind of its value; without it, none (`def[cache 60]`: `takes number`) |
 
 - **`does`** is Python: what the entry does. It gets the kernel (`self`), so `shared`
-  writes into `kernel["state"]["shared"]` and no fixed method like `self.share` is
+  writes into `self["files"][FILE]["names"]` and no fixed method like `self.share` is
   needed. A language's `does` gets `BODY`, `VAR` and `fill`, as a language does today.
 - **The help** (the comment lines above) is what the editor shows on hover.
 - **Coloring:** the editor colors an entry's parts so they read apart: the kind word
@@ -197,6 +208,9 @@ sample and guide listing must give the same results before and after.
 - **`applies to`** only where the kind doesn't say it: a modifier has it, a language
   doesn't.
 - **The fields** per kind are in section 2: `words`, `flags`, `editor`, `takes`.
+- **The Python API** (step 3): what the interpreter has is the tree, `self["…"]`;
+  what it does are methods. `self.share`, `self.alias`, `self.lookup`,
+  `self.file_path` and `self.store(name)` are gone.
 - **The flag `as written` is named `written`**, one word like every entry's name:
   `def[written] repeat A0 times : A1`. Its hover says what it means: the def gets its
   arguments as they are written, not their values.

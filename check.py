@@ -1,13 +1,13 @@
 """`def-lang check`: read a program without running it, and list its errors.
 
-Statements run as always (use, def, language, comment is, argument is), so the
-defs are known. Other lines are only read into a tree, never run: `start the server`
-opens no port and `give weight` asks nothing. Only `X means Y` runs, because the lines
-below it are read with it.
+Statements, entries, definitions and their modifiers run as always, so the defs are
+known. Other lines are only read into a tree, never run: `start the server` opens no
+port and `give weight` asks nothing. Only `X means Y` runs (a def that changes
+self["aliases"]), because the lines below it are read with it.
 
-What a line can't know without running is guessed from the defs' Python bodies: an
-`as written` argument that a body stores under (`self.variables[A0]`, `self.share(A0`)
-is a variable's name, so `x is 5` makes `x` known; any other is code, and is read too.
+What a line can't know without running is guessed from the defs' Python bodies: a
+`written` argument that a body stores under (`self["variables"][A0]`) is a variable's
+name, so `x is 5` makes `x` known; any other is code, and is read too.
 """
 import ast
 import re
@@ -16,16 +16,17 @@ from deflang.definition import SLOT_REGEX
 from deflang.exception import DefException
 from deflang.tree import Call, Name
 
-_NAME = re.compile(r"self\.variables(?:\[|\.setdefault\(|\.get\()\s*a\[(\d+)\]|self\.share\(\s*a\[(\d+)\]")
-_FIXED_NAME = re.compile(r"""self\.variables\[\s*["'](\w+)["']\s*\]""")
-_ALIAS = re.compile(r"self\.alias\(")
+_VARIABLES = r"""self\[\s*["']variables["']\s*\]"""
+_NAME = re.compile(_VARIABLES + r"(?:\[|\.setdefault\(|\.get\()\s*a\[(\d+)\]")
+_FIXED_NAME = re.compile(_VARIABLES + r"""\[\s*["'](\w+)["']\s*\]""")
+_ALIAS = re.compile(r"""self\[\s*["']aliases["']\s*\]""")
 _WORDS = re.compile(r"[\w ]+")
 
 
 def check_line(engine, line: str):
     _walk(engine, engine._parser.parse(line), strict=True)
     # an answer isn't known without running: the lines below it are read either way
-    engine.answer = True
+    engine._answer = True
 
 
 def check_bodies(engine, path, started):
@@ -41,9 +42,9 @@ def check_bodies(engine, path, started):
 
 def check_entries(engine, path):
     """Compile the `does` of the file's entries, so a syntax error shows on its entry's line."""
-    from deflang.kernel import PARAMETERS
-    for kind, entries in engine.kernel.items():
-        for entry in entries.values():
+    from deflang.kernel import KINDS, PARAMETERS
+    for kind in KINDS:
+        for entry in engine.kernel[kind].values():
             if entry.file == path and entry.does is not None:
                 try:
                     entry.does.function(PARAMETERS[kind])
@@ -52,7 +53,7 @@ def check_entries(engine, path):
 
 
 def _known(engine, name: str) -> bool:
-    if name in engine.variables:
+    if name in engine._variables:
         return True
     try:
         ast.literal_eval(name)
@@ -89,13 +90,13 @@ def _walk(engine, node, strict: bool):
             node.evaluate(engine)
             return
         for name in _FIXED_NAME.findall(body):
-            engine.variables.setdefault(name, None)
-        names = {int(n) for pair in _NAME.findall(body) for n in pair if n}
+            engine._variables.setdefault(name, None)
+        names = {int(n) for n in _NAME.findall(body)}
         for index in sorted(names):
             if index < len(node.arguments):
                 text = node.arguments[index].strip()
                 for name in [text] + text.split():
-                    engine.variables.setdefault(name, None)
+                    engine._variables.setdefault(name, None)
         for index, text in enumerate(node.arguments):
             text = text.strip()
             if index in names or not text or text == node.text.strip():
