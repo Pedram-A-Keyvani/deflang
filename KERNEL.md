@@ -128,6 +128,7 @@ statement comment
   | `flags` | a language | the flags it accepts, like `written, regex`; without it, none |
   | `editor` | a language | VS Code's language id, for coloring and formatting its bodies |
   | `takes` | a flag | the kind of its value; without it, none (`def[cache 60]`: `takes number`) |
+  | `replaces` | every kind | the file that declared the entry it replaces, as `use` names it: `replaces language/css` |
 
 - **`does`** is Python: what the entry does. It gets the kernel (`self`), so `shared`
   writes into `self["files"][FILE]["names"]` and no fixed method like `self.share` is
@@ -170,7 +171,9 @@ into core (`language def`) and the statements into libraries are later steps (se
 3. **Modifiers stack**, in any order, each applied in turn: `internal shared …`.
 4. **Flags are general**; a language may refuse a flag it can't use.
 5. **Who may change an entry:** any file may add one. Replacing an existing entry needs
-   an explicit replace, never a silent one, and the editor shows where it was replaced.
+   an explicit replace, never a silent one, and the editor shows where it was replaced:
+   the field `replaces FILE`, naming the file that declared it. Built-in entries can't
+   be replaced.
 
 ## 5. What it changes
 

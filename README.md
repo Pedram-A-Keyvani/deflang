@@ -603,7 +603,20 @@ hello Sam
   `a[1]`, …, as they are written.
 - `flag NAME` declares a flag; `takes` says the kind of its value (`def[cache 60]`),
   and `does` gets `TARGET` (the definition) and `VALUE`.
-- An entry is declared once; only the file that declared it can declare it again.
+- An entry is declared once. Another file replaces it only by saying so, with the
+  field `replaces FILE`: the file that declared it, named the way `use` names it.
+  From then on, the new entry is used, also by definitions made before it:
+
+  ```
+  language css
+      replaces language/css
+      editor css
+      does
+          ...
+  ```
+
+- A built-in entry (`def`, `python`, `written`, `regex`, the statements) can't be
+  replaced.
 
 ---
 
@@ -967,10 +980,10 @@ Written in brackets right after the language: `python[written, regex] …`.
 
 | Entry | Fields | Its `does` gets |
 |---|---|---|
-| `language NAME` | `does`, `editor`, `flags` | `BODY`, `VAR`, `fill` |
-| `modifier NAME` | `does`, `applies to` (`definition` or `name`) | `TARGET` |
-| `flag NAME` | `does`, `takes` | `TARGET`, `VALUE` |
-| `statement NAME` | `does`, `words` | `a`: its words |
+| `language NAME` | `does`, `editor`, `flags`, `replaces` | `BODY`, `VAR`, `fill` |
+| `modifier NAME` | `does`, `applies to` (`definition` or `name`), `replaces` | `TARGET` |
+| `flag NAME` | `does`, `takes`, `replaces` | `TARGET`, `VALUE` |
+| `statement NAME` | `does`, `words`, `replaces` | `a`: its words |
 
 Every `does` also gets `self`, the kernel ([Appendix D](#d-the-python-api)).
 
@@ -1031,7 +1044,10 @@ changed as `self[...]`; what it does are its methods.
 | `unknown flag 'x'` | a flag that isn't declared |
 | `NAME takes no flag 'x'` | a language that doesn't accept that flag (its `flags` field) |
 | `KIND NAME has no field 'x'` | a field the kind doesn't have |
-| `KIND NAME is there already` | an entry declared again, by another file |
+| `KIND NAME is there already (declared in FILE): to replace it, write replaces …` | an entry another file declared, declared again without `replaces` |
+| `KIND NAME was declared in FILE, not in OTHER` | `replaces` names another file than the one that declared it |
+| `KIND NAME replaces nothing` | `replaces` on an entry no other file declared before |
+| `KIND NAME is built in: it can't be replaced` | an entry the interpreter has built in, declared again |
 | ``language NAME has no `does` `` | a definition in a language without its Python |
 | `NAME applies to a definition` (or `a name`) | a modifier in front of the wrong kind of line |
 | `syntax error in body of 'def …'` | the Python body doesn't compile |

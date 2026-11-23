@@ -220,7 +220,7 @@ class Execute:
         Told apart from its start, in this order: a statement, an entry, a modifier, a
         definition; anything else is an expression."""
         pending, self._current_def = self._current_def, None
-        self._current_entry = None
+        self._end_entry()
         if self.reloading and (_ECHO.fullmatch(line) or _ERROR.fullmatch(line)):
             return None, True
         if m := _ECHO.fullmatch(line):
@@ -262,17 +262,45 @@ class Execute:
     # ------------------------------------------------------------ the kernel's entries
 
     def _declare(self, kind: str, name: str):
-        """`language html`, `modifier internal`, ...: a new entry; its fields follow."""
+        """`language html`, `modifier internal`, ...: a new entry; its fields follow. One
+        that another file declared already replaces it only with `replaces FILE`."""
         if not re.fullmatch(r"[\w-]+", name):
             raise DefException(f"an entry is its kind and a one-word name, like `{kind} {'html' if kind == 'language' else 'name'}`, with its fields below")
         file = self._import_files[-1] if self._import_files else None
         old = self.kernel[kind].get(name)
-        if old is not None and (old.built_in or old.file != file):
-            where = "built in" if old.built_in else f"declared in {old.file.name if old.file else 'the program'}"
-            raise DefException(f"{kind} {name} is there already ({where})")
+        if old is not None and old.built_in:
+            raise DefException(f"{kind} {name} is built in: it can't be replaced")
         entry = kernels.Entry(kind, name, file=file, line=self._line_number)
-        self.kernel[kind][name] = entry
+        if old is not None and old.file != file:
+            entry.replaced = old  # it takes old's place at `replaces` (see _entry_line, _end_entry)
+        else:
+            if old is not None:
+                entry.replaced = old.replaced  # the same file again (reloaded): it still replaces it
+            self.kernel[kind][name] = entry
         self._current_entry = entry
+
+    def _end_entry(self):
+        """The entry being read ends: one that replaces another file's must have said so."""
+        entry, self._current_entry = self._current_entry, None
+        if entry is not None and entry.replaced is not None and "replaces" not in entry.fields:
+            old = entry.replaced
+            error = DefException(f"{entry.kind} {entry.name} is there already (declared in {old.file.name if old.file else 'the program'}): "
+                                 f"to replace it, write `replaces {self._use_name(old.file)}` under `{entry.kind} {entry.name}`")
+            error.line = entry.line
+            raise error
+
+    def _use_name(self, path: Optional[Path]) -> str:
+        """How `use` names a file: `language/css`, `core`, `def/helpers`."""
+        if path is None:
+            return "FILE"
+        if (path.parent / "library.toml").is_file():
+            from deflang import libraries
+            name = libraries.read(path.parent)["name"]
+            return name if path.stem == "main" else f"{name}/{path.stem}"
+        try:
+            return path.relative_to(self["program"]).with_suffix("").as_posix()
+        except ValueError:
+            return path.stem
 
     def _entry_line(self, entry, line: str):
         """A line under an entry: a field one level in, or `does`'s Python further in."""
@@ -302,6 +330,13 @@ class Execute:
             entry.words.add_patterns(value, self._argument_name)
         elif found == "applies to" and value not in kernels.APPLIES_TO:
             raise DefException(f"a modifier applies to {' or '.join(kernels.APPLIES_TO)}, not {value}")
+        elif found == "replaces":
+            old = entry.replaced
+            if old is None:
+                raise DefException(f"{entry.kind} {entry.name} replaces nothing: no other file declared it before this one")
+            if not value or self._resolve(value) != old.file:
+                raise DefException(f"{entry.kind} {entry.name} was declared in {self._use_name(old.file)}, not in {value or 'nothing'}: replaces {self._use_name(old.file)}")
+            self.kernel[entry.kind][entry.name] = entry  # from here on, it is the one
         entry.fields[found] = value
         return None
 
@@ -453,6 +488,14 @@ class Execute:
         self._import_files.append(path)
         started = {}  # each def of this file -> the line it starts on, to check its body
         skipping = False
+
+        def failed(error: DefException, number: int):
+            number = getattr(error, "line", None) or number  # an entry's error: its own line
+            message = " ".join(map(str, error.args))
+            if not self.checking:
+                raise DefException(f"{path.name}:{number}: {message}")
+            self.problems.append((path, number, message))
+
         try:
             for number, line in enumerate(lines, start=1):
                 self._line_number = number
@@ -464,13 +507,14 @@ class Execute:
                     if result is not None and self._output is not None:
                         self._output(result)
                 except DefException as error:
-                    message = " ".join(map(str, error.args))
-                    if not self.checking:
-                        raise DefException(f"{path.name}:{number}: {message}")
-                    self.problems.append((path, number, message))
+                    failed(error, number)
                     skipping = True
                 if self._current_def is not None and id(self._current_def) not in started:
                     started[id(self._current_def)] = (self._current_def, number)
+            try:
+                self._end_entry()  # the file's last entry
+            except DefException as error:
+                failed(error, len(lines))
             if self.checking:
                 from deflang.check import check_bodies, check_entries
                 check_bodies(self, path, started.values())

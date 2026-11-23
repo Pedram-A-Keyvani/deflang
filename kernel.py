@@ -40,12 +40,12 @@ PARAMETERS = {
     "statement": "self, a",               # the words its `words` matched: A0, A1, ...
 }
 
-# the fields each kind may have (`does` is every kind's)
+# the fields each kind may have (`does` and `replaces` are every kind's)
 FIELDS = {
-    "language": {"does", "editor", "flags"},
-    "flag": {"does", "takes"},
-    "modifier": {"does", "applies to"},
-    "statement": {"does", "words"},
+    "language": {"does", "editor", "flags", "replaces"},
+    "flag": {"does", "takes", "replaces"},
+    "modifier": {"does", "applies to", "replaces"},
+    "statement": {"does", "words", "replaces"},
 }
 
 APPLIES_TO = ("definition", "name")
@@ -73,6 +73,8 @@ class Entry:
     built_in: bool = False
     line: int = 0                               # its line in that file
     reading_does: bool = False                  # while its `does` lines are read
+    # the entry of another file it replaces: it takes its place only with `replaces FILE`
+    replaced: Optional["Entry"] = None
 
     def accepts(self, flag: str) -> bool:
         """Whether this language takes the flag: def and python take every flag; another
