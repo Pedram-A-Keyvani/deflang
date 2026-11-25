@@ -20,6 +20,7 @@ import builtins
 import re
 import textwrap
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Callable, List, Optional
 
 from deflang.exception import DefException
@@ -119,7 +120,7 @@ class Match:
     pattern_index: int
     ambiguous: Optional[list] = None  # the files that define this same phrase, none in scope (tree._scoped)
 
-    @property
+    @cached_property
     def keyword_spans(self) -> frozenset:
         """Positions of the fixed words, e.g. `is` in `A0 is A1`."""
         named = set(self.match.re.groupindex.values())
@@ -129,7 +130,7 @@ class Match:
             if group not in named and self.match.start(group) != -1
         )
 
-    @property
+    @cached_property
     def arguments(self) -> List[str]:
         names = sorted(self.match.re.groupindex, key=lambda n: int(n[1:]))
         return [self.match.group(name).strip() for name in names]

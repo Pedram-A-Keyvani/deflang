@@ -88,6 +88,16 @@ class Parser:
         self.engine = engine
 
     def parse(self, text: str) -> Node:
+        """Parsing is a pure function of the text, the language snapshot and the
+        environment that affects how a line is read. All of those are in the key of
+        the language's one cache; nothing else about the interpreter is."""
+        engine = self.engine
+        scopes = tuple(tuple(files) for files in engine._scopes_now())
+        environment = (scopes, frozenset(engine._variables), engine._acting,
+                       engine._variables.file, engine["program"])
+        return engine._language.parse(self, text, environment)
+
+    def _parse_uncached(self, text: str) -> Node:
         masked, strings = self._mask_strings(text)
         return self._parse(self.engine.apply_aliases(masked), strings)
 
@@ -217,7 +227,7 @@ class Parser:
         5. Then the def defined first (see the order in the core library), so
            `a is 2 + 3` is `a is (2 + 3)`.
         """
-        definitions = self.engine.definitions
+        definitions = self.engine._language.refresh(self.engine.definitions, self.engine.kernel["aliases"])
         # which definitions this file sees: each one's `seen_by` says
         here = self.engine._variables.file
         candidates: List[Match] = [m for d in definitions if d.seen_by(here) for m in d.matches(text)]

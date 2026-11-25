@@ -19,6 +19,7 @@ from deflang.definition import SLOT_REGEX, Definition
 from deflang.exception import DefException
 from deflang.tree import Parser
 from deflang.kernel import DEFAULT_COMMENT, DEFAULT_INDENT, new_place
+from deflang.language import Language, ObservedDict, ObservedList
 from deflang.values import Variables, as_text
 
 _USE = re.compile(r"use\s+(.+)")
@@ -37,11 +38,15 @@ class Execute:
         """`output` receives the value of each line inside an imported file,
         and the text of each `backtick` line before it runs."""
         self._output = output
-        self.definitions: List[Definition] = []
+        # one versioned snapshot of the language: definitions, aliases and every
+        # cache derived from them (language.py). Mutating either container below
+        # makes the next parse rebuild the snapshot and drop stale trees.
+        self._language = Language()
+        self.definitions: List[Definition] = ObservedList(on_change=self._language.changed)
         # the kernel's tree (kernel.py), which Python bodies see as self[...]; the keys
         # that change with what runs (variables, file, ...) are answered by __getitem__
         self.kernel = kernels.built_in()
-        self._alias_cache = ((), [])  # the aliases as compiled patterns, longest first
+        self.kernel["aliases"] = ObservedDict(on_change=self._language.changed)
         # lines a def runs (run_lines) have the indent and comment marker of the file the
         # def was written in, whatever the file being read says
         self._call_indent: Optional[int] = None
@@ -390,6 +395,7 @@ class Execute:
             definition = self._define(m.group(1), m.group(2), m.group(3), pending)
             for entry in modifiers:
                 self._do(entry, {"definition": definition})
+            self._language.changed()  # a modifier may change how the def reads
             return None, True
         name = re.match(r"[\w-]+", rest).group(0)
         for entry in modifiers:
@@ -434,6 +440,7 @@ class Execute:
             if pending.language != language or pending.flags != flags:
                 raise DefException(f"a group's definition lines must have the language and flags of its first line: {language}{flag_text or ''} {pattern}")
             pending.add_patterns(pattern.strip(), self._argument_name)
+            self._language.changed()  # the group's patterns changed in place
             self._current_def = pending
             return pending
 
@@ -560,20 +567,24 @@ class Execute:
         lines = path.read_text().splitlines()
         old = [d for d in self.definitions if d.file == path]
         where = self.definitions.index(old[0]) if old else len(self.definitions)
-        before = self.definitions
-        self.definitions = [d for d in before if d.file != path]
+        before = list(self.definitions)
+        self._set_definitions([d for d in before if d.file != path])
         self.reloading = True
         try:
             self._read(path, lines)
         except BaseException:
-            self.definitions = before
+            self._set_definitions(before)
             raise
         finally:
             self.reloading = False
         new = [d for d in self.definitions if d.file == path]
         rest = [d for d in self.definitions if d.file != path]
         # in the same place as before, so which def binds looser stays the same
-        self.definitions = rest[:where] + new + rest[where:]
+        self._set_definitions(rest[:where] + new + rest[where:])
+
+    def _set_definitions(self, definitions: List[Definition]):
+        """Replace the definitions in place, so the snapshot is invalidated too."""
+        self.definitions[:] = definitions
 
     def _resolve(self, name: str) -> Path:
         """`use x`: x.def next to the file that uses it, or in the program's folder; else a
@@ -738,19 +749,6 @@ class Execute:
     def apply_aliases(self, text: str) -> str:
         """`X means Y` (kernel["aliases"]): Y wherever X appears as whole words, longer
         phrases first, so "less than or equal to" isn't broken up by "less than". Only on the
-        program's lines: an entry's `does` means what it says."""
-        if self._acting:
-            return text
-        aliases = self.kernel["aliases"]
-        state = tuple(aliases.items())
-        if state != self._alias_cache[0]:
-            compiled = []
-            for phrase, words in aliases.items():
-                phrase = " ".join(str(phrase).split())
-                pattern = re.compile(r"(?<!\S)" + r"\s+".join(map(re.escape, phrase.split())) + r"(?!\S)")
-                compiled.append((len(phrase), pattern, str(words).strip()))
-            compiled.sort(key=lambda item: -item[0])
-            self._alias_cache = (state, compiled)
-        for _, pattern, words in self._alias_cache[1]:
-            text = pattern.sub(lambda _: words, text)
-        return text
+        program's lines: an entry's `does` means what it says. The compiled patterns live on
+        the current language snapshot (language.py)."""
+        return self._language.apply_aliases(text, self._acting)
