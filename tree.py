@@ -101,8 +101,7 @@ class Parser:
         masked, strings = self._mask_strings(text)
         return self._parse(self.engine.apply_aliases(masked), strings)
 
-    @staticmethod
-    def _mask_strings(text: str):
+    def _mask_strings(self, text: str):
         strings = []
 
         def replace(m: re.Match):
@@ -111,7 +110,7 @@ class Parser:
 
         masked = re.sub(r'"([^"]*)"', replace, text)
         if '"' in masked:
-            raise DefException(f"missing closing quote in: {text.strip()}")
+            raise DefException(self.engine._display_text(f"missing closing quote in: {text.strip()}"))
         return masked, strings
 
     @staticmethod
@@ -142,7 +141,7 @@ class Parser:
         chosen = None
         for best in self._ranked(text):
             if best.ambiguous:
-                raise DefException(self._ambiguous(best, self._unmask(text, strings)))
+                raise DefException(self.engine._display_text(self._ambiguous(best, self._unmask(text, strings))))
             node = self._call(best, text, strings)
             if not self._lost(node):
                 return node

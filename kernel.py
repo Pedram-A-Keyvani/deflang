@@ -36,7 +36,9 @@ KINDS = ("language", "flag", "modifier", "statement")
 # what an entry acts on, given to its `does` as self["entry"] (see Execute._do):
 #   a language:  "definition" (the one that runs), "template" (its body, the places of its
 #                arguments marked), "values", "fill", "body" (filled in; the definition's
-#                value when `does` ends), "as written" (its arguments are words), "in place"
+#                value when `does` ends), "as written" (its arguments are words), "in place",
+#                "argument" (what its argument names start with), "written" (what the names
+#                stand for in errors, when the body binds values instead of writing them)
 #   a flag:      "definition" (being made, before its pattern is read); and the words
 #                in its places, A0, A1, ..., when it is written by `words`
 #   a modifier:  "definition" (just made), or "name"

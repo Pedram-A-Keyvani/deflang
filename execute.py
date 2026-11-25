@@ -79,6 +79,9 @@ class Execute:
         self.program_dir: Optional[Path] = None
         self._parser = Parser(self)
         self._current_entry: Optional[kernels.Entry] = None  # the entry whose fields are being read
+        # what a def-lang body's bound argument names stand for in its error messages:
+        # the words written at the call, innermost body last (see display_values)
+        self._display: List[dict] = []
         self._line_number = 0  # the line of the file being read, for an entry's place
         self.reloading = False  # reload(): only what defines runs again
         self.clean()
@@ -93,6 +96,7 @@ class Execute:
             place["names"].clear()
         self.kernel["shared"].clear()
         self._place(None)["argument"] = "A"
+        self._display.clear()
         self._variables = Variables(None, self._place(None), self.kernel["shared"])
         self._answer = None
 
@@ -675,15 +679,16 @@ class Execute:
             template = "\n".join(definition.lines())
             acts_on = {"definition": definition, "template": template, "values": arguments, "fill": fill,
                        "body": fill(template, [as_text(value) for value in arguments]),
-                       "as written": not definition.reads_values, "in place": definition.in_place}
+                       "as written": not definition.reads_values, "in place": definition.in_place,
+                       "argument": self._place(definition.file)["argument"]}
             result = self._do(entry, acts_on)
             return acts_on["body"] if result is None else result
         except DefException:
             raise
         except RecursionError:
-            raise DefException(f"'{text}' never finishes (it keeps matching itself)")
+            raise DefException(f"'{self._display_text(text)}' never finishes (it keeps matching itself)")
         except Exception as error:
-            raise DefException(f"in '{text}': {type(error).__name__}: {error}")
+            raise DefException(f"in '{self._display_text(text)}': {type(error).__name__}: {error}")
         finally:
             self._answers, self._call_indent, self._scope_base, self._scope_levels = outer
 
@@ -717,6 +722,30 @@ class Execute:
             (self._answers, self._call_indent, self._call_comment, self._entries, self._current_def,
              self._current_entry, self._acting, self._scope_base, self._scope_levels) = outer
         return result
+
+    def _display_text(self, text: str) -> str:
+        """Show a def-lang body's written arguments in an error, not the names its
+        template uses for them (`listen on 5`, not `listen on A0`). Only the body
+        running now applies: a nested call has its own arguments and its own names."""
+        if not self._display:
+            return text
+        names = self._display[-1]
+        if not names:
+            return text
+        alternatives = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+        # a quoted "A0" in def-lang source is a text, not the argument named A0.
+        # Single quotes are not skipped: error messages wrap their text in them.
+        pattern = re.compile(r'(?P<quote>"(?:\\.|[^"\\])*")|(?<!\w)(?P<name>' + alternatives + r')(?!\w)')
+        return pattern.sub(lambda match: match.group("quote") or names[match.group("name")], text)
+
+    @contextlib.contextmanager
+    def display_values(self, names: dict):
+        """Bind argument names to the words written at a call, for errors in its body."""
+        self._display.append(names)
+        try:
+            yield
+        finally:
+            self._display.pop()
 
     @contextlib.contextmanager
     def own_variables(self, file=_SAME):
