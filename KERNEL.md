@@ -233,3 +233,10 @@ sample and guide listing must give the same results before and after.
 - **The flag `as written` is named `written`**, one word like every entry's name:
   `def[written] repeat A0 times : A1`. Its hover says what it means: the def gets its
   arguments as they are written, not their values.
+- **Scopes**: where several files define the same phrase (the same fixed words in the
+  same places), the line's scope says which one is read; with none, it is an error,
+  never a silent pick. A scope is a file, named the way `use` names it (used if it
+  isn't yet), or a library's folder. A statement's `does` sets it in
+  `self["entry"]["scope"]`, for the rest of its `does` and the lines under it: the
+  statement library's `in the scope of web/http`, with the lines under it, or
+  `in the scope of io/audio, LINE`. A definition's own lines are in their own scope.

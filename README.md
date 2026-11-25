@@ -455,6 +455,7 @@ A statement's or a flag's words come to `does in def` as text, like `"#"`; with
 | `"as written"` | a language | `True` when the definition keeps its arguments' words |
 | `"in place"` | a language | `True` when the definition is an entry's `does`: it runs where the entry acts |
 | `"name"` | a modifier | the name after it, as text |
+| `"scope"` | a statement | a list, empty at first: the files (or a library's folder, all its files) whose phrases are read first, for the rest of its `does` and for the lines under it ([chapter 7](#7-how-a-line-is-read)); `self.scope_of(NAME)` gives one |
 
 **A definition** has `source` (its pattern), `language`, `flags`
 (`{"written": [], "cache": ["60"]}`: each flag, and its words), `file`, and `indent` and `comment` (those of its file
@@ -746,7 +747,7 @@ modifier internal
 
 statement comment
     words comment is A0
-    does in def
+    does in def[written]
         set comment marker to A0
 ```
 
@@ -756,6 +757,7 @@ statement comment
 | `language html`, `css`, `javascript` | `language/html.def`, … | bodies in those languages |
 | `flag written`, `regex` | `flag/written.def`, `flag/regex.def` | [Listing 5-3](#listing-5-3), [Listing 5-4](#listing-5-4) |
 | `statement comment`, `argument`, `indent`, `error`, `echo` | `statement/comment.def`, … | `comment is X`, `argument is X`, `indent N`, `error MESSAGE`, `` `LINE` `` |
+| `statement scope`, `scoped` | `statement/scope.def` | `in the scope of FILES` with the lines under it, and `in the scope of FILES, LINE` ([chapter 7](#7-how-a-line-is-read)) |
 | `modifier shared`, `internal` | `modifier/shared.def`, … | [6.2](#62-shared), [Listing 5-5](#listing-5-5) |
 
 [Writing Languages, Flags, Modifiers and Statements](https://github.com/Pedram-A-Keyvani/deflang-lib/blob/main/ENTRIES.md) explains these words,
@@ -972,18 +974,27 @@ python[written] (A0: one|two|three)
 | 1 | A match whose fixed words are all part of a longer match loses | `keep visits is 0` | `keep A0 is A1`, not `A0 is A1` |
 | 2 | **Brackets:** a definition whose fixed words surround another's wraps it | `"big" if 5 > 3 otherwise "small"` | `if … otherwise` wraps `>` |
 | 3 | **Sentences:** a `written` definition that starts the line with two or more fixed words wraps what follows them | `repeat 3 times: x is x + 1` | `repeat` wraps `is` |
-| 4 | **Word lists:** a definition with no fixed words that matches the whole text is one value | `two + three` | `(two) + (three)`: 5 |
-| 5 | **Order:** otherwise, the definition made first wraps | `x is 2 + 3 > 4` | `x is ((2 + 3) > 4)` |
-| 6 | **No value:** a reading with an argument that can't be a value (an unknown name) loses to the next one | `count of "abc"` | `count of A0`, not `count of` joined with `"abc"` |
+| 4 | **Scope:** the same phrase from several files, the same fixed words in the same places: the one in the line's scope; with none, an error | `in the scope of web/http, listen on 80` | web/http's `listen on A0` |
+| 5 | **Word lists:** a definition with no fixed words that matches the whole text is one value | `two + three` | `(two) + (three)`: 5 |
+| 6 | **Order:** otherwise, the definition made first wraps | `x is 2 + 3 > 4` | `x is ((2 + 3) > 4)` |
+| 7 | **No value:** a reading with an argument that can't be a value (an unknown name) loses to the next one | `count of "abc"` | `count of A0`, not `count of` joined with `"abc"` |
 
 - **Closing words (rule 3):** a closing word at the very end, like `?`, isn't part of
   the sentence; the order decides. `all of [1, 2] are > 0 ?` is read as `A0 ?`, because
   `A0 ?` was made first. A text at the very end is no closing word.
 - **Phrases (rule 3):** a definition that takes values isn't a sentence:
   `count of [1, 2] > 1` is `(count of [1, 2]) > 1`.
-- **Word lists (rule 4):** the word list is `written`: it needs the word itself. Without
+- **Scope (rule 4):** a statement's `does` puts files in its `self["entry"]["scope"]`
+  ([5.1](#51-writing-an-entry)); they are the scope of the rest of its `does` and of the
+  lines under it. The statement library's are `in the scope of web/http`, with the lines
+  under it, and `in the scope of web/http, LINE`. A scope is a file, named the way `use`
+  names it, and used if it isn't yet; or a library, all its files: `in the scope of core`.
+  A definition's own lines are in its own scope, not in its caller's; a `written`
+  definition's run in the caller's. With no scope, `listen on 80` is an error when two
+  files have `listen on A0`: the interpreter doesn't guess.
+- **Word lists (rule 5):** the word list is `written`: it needs the word itself. Without
   `written`, `two`'s value would be read with the same definition again, and again.
-- **Order (rule 5):** in [Listing 7-1](#listing-7-1), `say`, `A0 ?` and `A0 is A1` are
+- **Order (rule 6):** in [Listing 7-1](#listing-7-1), `say`, `A0 ?` and `A0 is A1` are
   made before joined text, and joined text before `>` and `+`: so `say "x = " 2 + 3`
   says `x = 5`.
 
@@ -1103,7 +1114,8 @@ The interpreter's statement is `use`:
 
 The statement library declares the others: `comment is X`, `argument is X` and
 `indent N` (each to the end of the file; each file starts with `//`, `A` and `4`),
-`error MESSAGE` and `` `LINE` ``.
+`error MESSAGE`, `` `LINE` ``, and `in the scope of FILES` (the lines under it, or
+the rest of its line after a comma).
 
 ### B. Entries
 
@@ -1145,6 +1157,7 @@ changed as `self[...]`; what it does are its methods.
 | `self.say(value)` | prints a value |
 | `self.own_variables(file)` | in a `with` block, lines get variables of their own, on top of `file`'s (a def-lang call, a web request) |
 | `self.changed_files()`, `self.reload(path)` | the files saved since they were read; reads one again, in place of its old definitions |
+| `self.scope_of(name)` | for a statement's `self["entry"]["scope"]`: the file `use NAME` names, used if it isn't yet; for a library's name, its folder (its `main.def` used, if it has one) |
 
 | Name | Is |
 |---|---|
@@ -1192,6 +1205,7 @@ changed as `self[...]`; what it does are its methods.
 | `cannot use 'x'` | no `x.def` and no library `x` |
 | `x has no shared variable 'n'` | `use n from x`, but `x` doesn't say `shared n` |
 | `` `as` is only for names `` | `as` after a file name, like `use core as c` |
+| ``'…' is a phrase of FILE and of OTHER: say which, like `in the scope of FILE, …` `` | two files define the same phrase, and the line is in the scope of neither, or of both |
 
 ### E. The Interpreter's Files
 

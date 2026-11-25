@@ -131,6 +131,8 @@ class Parser:
         # `length of` in `length of "hello"`, read as joined text): then the next
         chosen = None
         for best in self._ranked(text):
+            if best.ambiguous:
+                raise DefException(self._ambiguous(best, self._unmask(text, strings)))
             node = self._call(best, text, strings)
             if not self._lost(node):
                 return node
@@ -176,6 +178,30 @@ class Parser:
                     return True
         return False
 
+    def _scoped(self, matches: List[Match]) -> List[Match]:
+        """Where several files define the same phrase (the same fixed words in the same
+        places), only the ones in the line's scope stay (Execute.in_scope). With none, or
+        several files', in scope, the first stays, and choosing it is an error (_parse)."""
+        groups = {}
+        for m in matches:
+            if m.keyword_spans:
+                arguments = tuple(m.match.span(name) for name in sorted(m.match.re.groupindex))
+                groups.setdefault((m.keyword_spans, arguments), []).append(m)
+        dropped = set()
+        for group in groups.values():
+            if len({m.definition.file for m in group}) < 2:
+                continue
+            scoped = [m for m in group if self.engine.in_scope(m.definition.file)] or group
+            dropped.update(id(m) for m in group if not any(m is s for s in scoped[:1]))
+            if len({m.definition.file for m in scoped}) > 1:
+                scoped[0].ambiguous = sorted({m.definition.file for m in scoped}, key=lambda f: self.engine._use_name(f) if f else "")
+        return [m for m in matches if id(m) not in dropped]
+
+    def _ambiguous(self, match: Match, text: str) -> str:
+        names = [self.engine._use_name(file) if file is not None else "the program" for file in match.ambiguous]
+        return (f"'{text}' is a phrase of {', of '.join(names[:-1])} and of {names[-1]}: say which, "
+                f"like `in the scope of {names[0]}, …`")
+
     def _ranked(self, text: str) -> List[Match]:
         """Pick the definition that becomes the outermost node.
 
@@ -184,9 +210,11 @@ class Parser:
            inside `each of them is` doesn't count as an assignment. A def with
            no fixed words at all, like `(A0: one|two)`, is never dropped.
         2. A match that another one wraps is dropped (see `wraps`): brackets, and sentences.
-        3. A word list (no fixed words, like the number words) that matches the
+        3. The same phrase from several files (the same fixed words in the same places):
+           the one in the scope of the line (`in the scope of web/http`, see _scoped).
+        4. A word list (no fixed words, like the number words) that matches the
            whole text is one value: `one hundred and two`.
-        4. Then the def defined first (see the order in the core library), so
+        5. Then the def defined first (see the order in the core library), so
            `a is 2 + 3` is `a is (2 + 3)`.
         """
         definitions = self.engine.definitions
@@ -198,6 +226,7 @@ class Parser:
         spans = [c.keyword_spans for c in candidates]
         kept = [c for c, s in zip(candidates, spans) if not (s and any(s < other for other in spans))]
         kept = [c for c in kept if not any(wraps(o, c, text) for o in kept if o is not c)]
+        kept = self._scoped(kept)
         words = [c for c in kept if not c.keyword_spans]
         order = {id(d): i for i, d in enumerate(definitions)}
         rank = lambda c: (order[id(c.definition)], c.pattern_index)

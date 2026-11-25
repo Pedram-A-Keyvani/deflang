@@ -114,6 +114,7 @@ class Match:
     definition: "Definition"
     match: re.Match
     pattern_index: int
+    ambiguous: Optional[list] = None  # the files that define this same phrase, none in scope (tree._scoped)
 
     @property
     def keyword_spans(self) -> frozenset:

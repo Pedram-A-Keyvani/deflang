@@ -54,6 +54,13 @@ class Execute:
         # the answer of the last line on each level: a line one level deeper runs
         # only if it is True (see _run_at)
         self._answers: list = []
+        # the scopes of the lines being read (`in the scope of web/http`: a statement's
+        # self["entry"]["scope"]): where several files define the same phrase, the one in
+        # scope is read. _scope_base lasts while these lines run; each of _scope_levels,
+        # (level, [files and folders]), lasts for the lines under its line (see in_scope).
+        # They hold the statements' lists themselves: what a `does` adds counts at once
+        self._scope_base: tuple = ()
+        self._scope_levels: list = []
         # `def-lang check` (check.py): read without running; errors are collected here
         self.checking = False
         self.problems: List[tuple] = []  # (file, line, message)
@@ -197,6 +204,8 @@ class Execute:
         is the answer of the last line on its own level, so a def like `otherwise ?`
         turns around its neighbor's answer, not a deeper line's."""
         answers = self._answers
+        # a scope lasts for the lines under its line: a line on its level, or above, ends it
+        self._scope_levels = [scope for scope in self._scope_levels if scope[0] < level]
         if level > len(answers):
             raise DefException(f"indented line with no line above it to belong to: {line}")
         if level:
@@ -225,9 +234,11 @@ class Execute:
         self._end_entry()
         if m := _USE.fullmatch(line):
             self._use(m.group(1).strip())
-        elif (value := self._statement(line)) is not _NOT_A_STATEMENT:
-            # a statement whose `does` gives a value (`` `line` ``) is like an expression
-            return value, value is None
+        elif (value := self._statement(line, level)) is not _NOT_A_STATEMENT:
+            # a statement whose `does` gives a value (`` `line` ``) is like an expression;
+            # so is one with lines under it, in its scope: they run if it left the answer True
+            scoped = bool(self._scope_levels) and self._scope_levels[-1][0] == level
+            return value, value is None and not scoped
         elif m := _ENTRY.fullmatch(line):
             self._declare(m.group(1), (m.group(2) or "").strip())
         elif (modifiers := self._modifiers(line))[0]:
@@ -346,12 +357,21 @@ class Execute:
         finally:
             self._entries.pop()
 
-    def _statement(self, line: str):
+    def _statement(self, line: str, level: int = 0):
         """A statement a library declared (`statement NAME` with `words`): run it, and give
-        what its `does` returns; _NOT_A_STATEMENT when no statement's words match."""
+        what its `does` returns; _NOT_A_STATEMENT when no statement's words match. The
+        files its `does` puts in self["entry"]["scope"] are the scope of the rest of its
+        `does` and of the lines under it."""
         for entry in self.kernel["statement"].values():
             if entry.words is not None and (found := entry.words.matches(line)):
-                return self._do(entry, {}, found[0].arguments)
+                acts_on = {"scope": []}
+                scope = (level, acts_on["scope"])
+                self._scope_levels = self._scope_levels + [scope]
+                try:
+                    return self._do(entry, acts_on, found[0].arguments)
+                finally:
+                    if not acts_on["scope"]:
+                        self._scope_levels = [s for s in self._scope_levels if s is not scope]
         return _NOT_A_STATEMENT
 
     def _modifiers(self, line: str):
@@ -468,12 +488,14 @@ class Execute:
     def _read(self, path: Path, lines: List[str]):
         """Run the lines of the file at path, as that file: its folder for imports, its defs marked as its."""
         self._file_times[path] = path.stat().st_mtime_ns
-        saved = self._answers, self._variables, self._call_indent, self._call_comment, self._entries, self._acting
+        saved = (self._answers, self._variables, self._call_indent, self._call_comment, self._entries, self._acting,
+                 self._scope_base, self._scope_levels)
         # each file starts as if it said `argument is A`, `comment is //` and `indent 4`,
-        # with variables of its own
+        # with variables of its own, in no scope
         place = self._place(path)
         place.update({key: value for key, value in new_place().items() if key in ("comment", "argument", "indent")})
         self._answers, self._call_indent, self._call_comment, self._entries, self._acting = [], None, None, [], False
+        self._scope_base, self._scope_levels = (), []
         self._variables = Variables(path, place, self.kernel["shared"])
         self._import_dirs.append(path.parent)
         self._import_files.append(path)
@@ -514,7 +536,8 @@ class Execute:
             self._current_entry = None
             self._import_dirs.pop()
             self._import_files.pop()
-            self._answers, self._variables, self._call_indent, self._call_comment, self._entries, self._acting = saved
+            (self._answers, self._variables, self._call_indent, self._call_comment, self._entries, self._acting,
+             self._scope_base, self._scope_levels) = saved
             self._current_def = None
 
     def changed_files(self) -> List[Path]:
@@ -558,22 +581,57 @@ class Execute:
         library's server.def. A library is found among the program's libraries, or, for a
         file of a library, among the libraries that library's libraries.toml lists."""
         from deflang import libraries
-        program = self.program_dir or Path(os.getcwd())
-        for directory in self._import_dirs[-1:] + [program]:
-            path = (directory / f"{name}.def").resolve()
-            if path.is_file():
-                return path
+        if (path := self._local(name)) is not None:
+            return path
         library, _, inside = name.partition("/")
-        folders = [libraries.folder_of(program, library)]
-        here = self._import_dirs[-1] if self._import_dirs else None
-        if here and (here / "library.toml").is_file():
-            folders.append(libraries.folder_of(here, library))
-        for folder in filter(None, folders):
+        if (folder := self._library_folder(library)) is not None:
             path = (folder / f"{inside or 'main'}.def").resolve()
             if path.is_file():
                 return path
             raise DefException(f"cannot use '{name}': the library {library} has no {inside or 'main'}.def")
         raise DefException(f"cannot use '{name}': no file {name}.def, and no library '{library}' ({libraries.HOW_TO_INSTALL})")
+
+    def _local(self, name: str) -> Optional[Path]:
+        """`name.def` next to the file that uses it, or in the program's folder."""
+        program = self.program_dir or Path(os.getcwd())
+        for directory in self._import_dirs[-1:] + [program]:
+            path = (directory / f"{name}.def").resolve()
+            if path.is_file():
+                return path
+        return None
+
+    def _library_folder(self, library: str) -> Optional[Path]:
+        """The folder of the library a program, or the library being read, lists."""
+        from deflang import libraries
+        program = self.program_dir or Path(os.getcwd())
+        folders = [libraries.folder_of(program, library)]
+        here = self._import_dirs[-1] if self._import_dirs else None
+        if here and (here / "library.toml").is_file():
+            folders.append(libraries.folder_of(here, library))
+        return next(filter(None, folders), None)
+
+    # ------------------------------------------------------------ scopes
+
+    def scope_of(self, name: str) -> Path:
+        """`in the scope of NAME` (a statement's self["entry"]["scope"]): the file `use
+        NAME` names, used if it isn't yet; or, for a library's own name, its folder, so
+        every file of it (its main.def used, if it has one)."""
+        name = name.strip()
+        if "/" not in name and self._local(name) is None and (folder := self._library_folder(name)) is not None:
+            if (folder / "main.def").is_file():
+                self._import(name)
+            return folder.resolve()
+        return self._import(name)
+
+    def in_scope(self, file) -> bool:
+        """Whether the definitions of `file` are in the scope of the line being read: a
+        scope is a file, or a library's folder (every file in it)."""
+        return any(file == place or (file is not None and place.is_dir() and file.is_relative_to(place))
+                   for files in self._scopes_now() for place in files)
+
+    def _scopes_now(self) -> tuple:
+        """The scopes of the lines running now: (the lists of files and folders, ...)."""
+        return self._scope_base + tuple(files for _, files in self._scope_levels)
 
     # ------------------------------------------------------------ used by the tree and by def bodies
 
@@ -581,9 +639,12 @@ class Execute:
         """Run a definition: a Python body itself; another language's body by that
         language's `does`, which acts on it (self["entry"]: its body, its values, ...).
         The definition's value is what that `does` gives, or else the body it leaves."""
-        # the lines a def runs have levels of their own; its answer still comes out
-        outer = self._answers, self._call_indent
+        # the lines a def runs have levels of their own; its answer still comes out. They
+        # are in the scope of the line that calls it (a Python body may run its words),
+        # until they get variables of their own (see own_variables)
+        outer = self._answers, self._call_indent, self._scope_base, self._scope_levels
         self._answers, self._call_indent = [], DEFAULT_INDENT
+        self._scope_base, self._scope_levels = self._scopes_now(), []
         try:
             if definition.language == "python":
                 return definition.function()(self, arguments)
@@ -604,7 +665,7 @@ class Execute:
         except Exception as error:
             raise DefException(f"in '{text}': {type(error).__name__}: {error}")
         finally:
-            self._answers, self._call_indent = outer
+            self._answers, self._call_indent, self._scope_base, self._scope_levels = outer
 
     def run_lines(self, text: str, definition: Optional[Definition] = None):
         """Run lines the way a file's lines run: each on its level, comments skipped, a line
@@ -613,8 +674,10 @@ class Execute:
         value of the last line that had one."""
         # the definition or entry being written stays so: these lines are no part of it
         outer = (self._answers, self._call_indent, self._call_comment, self._entries, self._current_def,
-                 self._current_entry, self._acting)
+                 self._current_entry, self._acting, self._scope_base, self._scope_levels)
         self._current_def = self._current_entry = None
+        # in the scope they run in; a scope they set lasts for their lines under it
+        self._scope_base, self._scope_levels = self._scopes_now(), []
         # an entry's `does` acts for it, and so does what it calls; lines run without a
         # definition (`run_lines(text)`, like an echoed line) are the program's lines again
         self._acting = definition is not None and (self._acting or definition.in_place)
@@ -632,7 +695,7 @@ class Execute:
                     result = value
         finally:
             (self._answers, self._call_indent, self._call_comment, self._entries, self._current_def,
-             self._current_entry, self._acting) = outer
+             self._current_entry, self._acting, self._scope_base, self._scope_levels) = outer
         return result
 
     @contextlib.contextmanager
@@ -640,14 +703,16 @@ class Execute:
         """Lines run inside get variables of their own, on top of `file`'s (by default
         the file of the lines running now): what they set is gone afterwards, except the
         shared variables that file uses. A def call has this with the file the def was
-        made in; the web server gives one to each request."""
-        outer = self._variables, self._answers
+        made in; the web server gives one to each request. They are in no scope: they
+        are that file's lines, not the caller's."""
+        outer = self._variables, self._answers, self._scope_base, self._scope_levels
         file = self._variables.file if file is _SAME else file
         self._variables, self._answers = Variables(file, self._place(file), self.kernel["shared"], own={}), []
+        self._scope_base, self._scope_levels = (), []
         try:
             yield self._variables
         finally:
-            self._variables, self._answers = outer
+            self._variables, self._answers, self._scope_base, self._scope_levels = outer
 
     def say(self, value):
         """Print a value: through `output` when the REPL gave one, otherwise print()."""
