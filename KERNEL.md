@@ -138,7 +138,7 @@ statement comment
 - **No flag or modifier is known to the kernel by name.** A definition has three
   hooks, with the kernel's defaults: `read_pattern` (readable patterns), `read_argument`
   (read as an expression, for its value) and `seen_by` (every file). An entry changes
-  them; the core library's `kernel.def` gives the words for it, so entries are written
+  them; the `entry` library gives the words for it, so entries are written
   in def, mostly with one word, `set A0 to A1`: `set arguments to as written` (written), `set pattern to regex` (regex),
   `set seen by to the file` (internal), `set name to shared` (shared), `set comment
   marker to A0`, `set body to upper-case`, …. Python stays in the kernel and in core's
@@ -222,7 +222,7 @@ sample and guide listing must give the same results before and after.
 - **`does in LANGUAGE`**, required: `does` is open to any language. What it acts on
   is in `self["entry"]`, decided by where the entry stands; there is no `applies to`.
 - **Entries in def**: a `does in def` is commands with no subject (`allow only in the
-  file`), acting on what the entry acts on. Core's `kernel.def` holds their Python.
+  file`), acting on what the entry acts on. The `entry` library holds their Python.
 - **The fields** per kind are in section 2: `words` (statements and flags), `editor`,
   `replaces`. A flag is written by its `words`; there is no `takes`. A language has no
   `flags` field: every language takes every flag. `does in LANGUAGE[FLAGS]` says how
@@ -246,3 +246,8 @@ sample and guide listing must give the same results before and after.
   The web server keeps its pages and apis this way, in def.
 - **A pattern's argument with a symbol right after it** (`A0 and A1, as A2`) is the
   argument, then the symbol.
+- **Libraries with one job each** (deflang-lib): every library does one thing, and each
+  of its files uses what it needs, so it works and checks on its own. `core` is a
+  bundle of the everyday ones, used in the order that decides how a line is read. A
+  library never decides where its inputs come from: the server takes its port from
+  `server on port`, and the program says where that comes from.

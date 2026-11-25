@@ -13,7 +13,7 @@ of the libraries in deflang-lib, each described in its README.
 
 | Repository | Holds |
 |---|---|
-| [deflang-lib](https://github.com/Pedram-A-Keyvani/deflang-lib) | the libraries: `core` (values, questions, loops, lists, text, math), `language` (`def`, `html`, `css`, `javascript`), `flag`, `statement`, `modifier`, `web`; each with a README of its words |
+| [deflang-lib](https://github.com/Pedram-A-Keyvani/deflang-lib) | the libraries, each with one job and a README of its words: `core` (a bundle of the everyday words: values, questions, loops, lists, text, math, ...), `language` (`def`, `html`, `css`, `javascript`), `flag`, `statement`, `modifier`, `entry`, `files`, `settings`, and for the web `http`, `server`, `website`, `api`, `template`, `spa` |
 | [deflang-sample](https://github.com/Pedram-A-Keyvani/deflang-sample) | sample programs (hello world to a website), and the tests of the interpreter and the libraries |
 | [deflang-editor](https://github.com/Pedram-A-Keyvani/deflang-editor) | the VS Code extension: colors, hover, Ctrl+click, IntelliSense, errors as you type; it finds or installs the interpreter |
 
@@ -473,7 +473,7 @@ kernel calls them, and an entry may change them:
 A statement's: nothing, or a value; then the line is like an expression, with that
 value. A flag's and a modifier's: nothing.
 
-**In def.** The core library's `kernel.def` gives the words to write entries in def,
+**In def.** The `entry` library gives the words to write entries in def,
 like `set arguments to as written` or `set seen by to the file`: then most entries
 need no Python ([5.7](#57-the-libraries-entries)). deflang-lib's
 [Writing Languages, Flags, Modifiers and Statements](https://github.com/Pedram-A-Keyvani/deflang-lib/blob/main/ENTRIES.md) says what each word
@@ -737,7 +737,7 @@ language css
 ### 5.7 The Libraries' Entries
 
 deflang-lib declares these, one file each; `use core` uses them all. The flags,
-modifiers and statements are written in def, with the words of core's `kernel.def`:
+modifiers and statements are written in def, with the words of the `entry` library:
 
 ```
 flag written
