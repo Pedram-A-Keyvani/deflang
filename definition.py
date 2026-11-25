@@ -1,15 +1,19 @@
-"""A user definition created with `def ...`: its patterns and its body.
+"""A definition, `LANGUAGE[FLAGS] PATTERN` and its body: its patterns and its body.
 
-Patterns are readable by default:  `def A0 is between A1 and A2`
+Patterns are readable:  `python A0 is between A1 and A2`
   - words and symbols are fixed words,
   - A0, A1, ... are arguments,
-  - (A0: regex) is an argument that only matches that regex.
-`def regex ...` keeps the old raw-regex patterns (alternatives split by " or ").
+  - (A0: regex) is an argument that only matches that regex,
+  - "A0" is an argument that only matches a text.
 
-Bodies are def-lang lines by default. A flag that names a language makes the
-body that language: `def python ...` bodies are Python (built in), and any other
-language is declared with `language NAME` and a Python body that runs it (like the
-html library's `language html`).
+A definition has three hooks, with the kernel's defaults; a flag or a modifier may
+change them (the core library's words do, like `set pattern to regex`):
+  - read_pattern(text, argument_name): its pattern's text, as regexes;
+  - read_argument(text, read): an argument's text, as what the body gets; the default
+    reads it as an expression, for its value; text that is kept stays its words;
+  - seen_by(file): whether a line of that file may use it.
+
+The body is kept as it is written; its language runs it (Python is built in).
 """
 import ast
 import builtins
@@ -85,10 +89,24 @@ def readable_to_regex(text: str, argument_name: str) -> str:
     return regex
 
 
-def regex_to_regex(text: str, argument_name: str) -> str:
-    restricted = re.compile(rf"\({re.escape(argument_name)}(\d+):\s*")
-    regex = restricted.sub(lambda m: f"(?P<a{m.group(1)}>", text)
-    return argument_regex(argument_name).sub(lambda m: rf"(?P<a{m.group(1)}>[\s\S]+)", regex)
+def read_readable(text: str, argument_name: str) -> List[str]:
+    """The kernel's way to read a pattern (a definition's `read_pattern`, until an entry
+    changes it): words, A0, (A0: regex), "A0". One regex."""
+    return [readable_to_regex(text, argument_name)]
+
+
+def read_value(text: str, read: Callable):
+    """The kernel's way to read an argument (a definition's `read_argument`, until an
+    entry changes it): `read(text)` reads it as an expression, run for its value."""
+    return read(text)
+
+
+def seen_everywhere(file) -> bool:
+    """The kernel's answer to which files see a definition (its `seen_by`): every file."""
+    return True
+
+
+_PROBE = object()
 
 
 @dataclass
@@ -116,13 +134,15 @@ class Match:
 @dataclass
 class Definition:
     source: str
-    as_written: bool = False
-    regex: bool = False
-    language: Optional[str] = None  # the body's language; None is def-lang
-    is_language: bool = False        # the runner of a `language NAME` declaration
+    language: Optional[str] = None  # the body's language: def, python, html, ...
     file: Optional[object] = None    # the .def file it was read from (a Path), None if typed in
     flags: dict = field(default_factory=dict)  # its flags: {"written": None, "cache": "60"}
-    internal: bool = False           # only its own file sees it (the `internal` modifier)
+    indent: int = 4                  # the indent and comment marker of its file where it
+    comment: str = "//"              # was written, for its body's lines (run_lines)
+    in_place: bool = False           # an entry's `does`: it runs where the entry acts
+    read_pattern: Callable = field(default=read_readable, repr=False)
+    read_argument: Callable = field(default=read_value, repr=False)
+    seen_by: Callable = field(default=seen_everywhere, repr=False)
     patterns: List[re.Pattern] = field(default_factory=list)
     body: List[str] = field(default_factory=list)
     _function: Optional[Callable] = field(default=None, repr=False)
@@ -131,16 +151,19 @@ class Definition:
     def python(self) -> bool:
         return self.language == "python"
 
+    @property
+    def reads_values(self) -> bool:
+        """Whether its arguments are read as expressions, for their values (the kernel's
+        way), rather than kept as the words they are written with."""
+        return self.read_argument("x", lambda text: _PROBE) is _PROBE
+
     def add_patterns(self, source: str, argument_name: str):
-        """One `def` line. Several def lines in a row share the body below them."""
-        texts = source.split(" or ") if self.regex else [source]
-        for text in texts:
-            convert = regex_to_regex if self.regex else readable_to_regex
-            regex = convert(text.strip(), argument_name)
+        """One definition line. Several in a row share the body below them."""
+        for regex in self.read_pattern(source.strip(), argument_name):
             try:
                 self.patterns.append(re.compile(regex))
             except re.error as error:
-                raise DefException(f"invalid def pattern '{text.strip()}': {error}")
+                raise DefException(f"invalid def pattern '{source.strip()}': {error}")
 
     def add_line(self, line: str, argument_name: str):
         slot = (lambda m: f"a[{m.group(1)}]") if self.python else (lambda m: _SLOT.format(m.group(1)))
@@ -155,7 +178,7 @@ class Definition:
         ]
 
     def lines(self) -> List[str]:
-        """The def-lang body, without its common indentation."""
+        """The body, without its common indentation."""
         return textwrap.dedent("\n".join(self.body)).splitlines()
 
     def function(self, parameters: str = "self, a") -> Callable:

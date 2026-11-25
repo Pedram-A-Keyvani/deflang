@@ -15,15 +15,16 @@ and everything else the interpreter has. A Python body reads and changes it as s
 
 What the interpreter does stays a method: self.run(text), self.say(value).
 
+Built in are only the language `python` (every `does` is Python) and the statement
+`use` (it loads the libraries). The rest is declared in libraries, each kind the same
+way: `language def`, `flag written`, `modifier shared`, `statement comment`.
+
 A file declares an entry with its kind and a one-word name, and its fields one level in:
 
     language html
         editor html
         does
             ...Python...
-
-The built-in entries are `def` and `python`, the flags `written` and `regex`, and the
-statements `use`, `comment`, `argument`, `indent` and `error`. Libraries add the rest.
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -32,26 +33,26 @@ from deflang.definition import Definition
 
 KINDS = ("language", "flag", "modifier", "statement")
 
-# what each kind's `does` gets
-PARAMETERS = {
-    "language": "self, BODY, VAR, fill",  # the def's body text, its argument values, fill()
-    "modifier": "self, TARGET",           # the definition, or the name, it modifies
-    "flag": "self, TARGET, VALUE",        # the definition, and the flag's value (or None)
-    "statement": "self, a",               # the words its `words` matched: A0, A1, ...
-}
+# what an entry acts on, given to its `does` as self["entry"] (see Execute._do):
+#   a language:  "definition" (the one that runs), "template" (its body, the places of its
+#                arguments marked), "values", "fill", "body" (filled in; the definition's
+#                value when `does` ends), "as written" (its arguments are words), "in place"
+#   a flag:      "definition" (being made, before its pattern is read); and the words
+#                in its places, A0, A1, ..., when it is written by `words`
+#   a modifier:  "definition" (just made), or "name"
+#   a statement: its words, as the arguments of its `does` (A0, A1, ...)
+# A `does` runs where the entry acts: in the variables of the line.
 
-# the fields each kind may have (`does` and `replaces` are every kind's)
+# the fields each kind may have (`does in LANGUAGE` and `replaces` are every kind's)
 FIELDS = {
-    "language": {"does", "editor", "flags", "replaces"},
-    "flag": {"does", "takes", "replaces"},
-    "modifier": {"does", "applies to", "replaces"},
+    "language": {"does", "editor", "replaces"},
+    "flag": {"does", "words", "replaces"},
+    "modifier": {"does", "replaces"},
     "statement": {"does", "words", "replaces"},
 }
 
-APPLIES_TO = ("definition", "name")
-
 # the keys of the tree that change with what runs; the rest are kept in one dict
-RUNNING = ("definitions", "variables", "file", "program", "answer")
+RUNNING = ("definitions", "variables", "file", "program", "answer", "mode", "entry")
 DEFAULT_COMMENT, DEFAULT_ARGUMENT, DEFAULT_INDENT = "//", "A", 4
 
 
@@ -67,7 +68,7 @@ class Entry:
     kind: str
     name: str
     fields: dict = field(default_factory=dict)  # field -> its text: "editor" -> "html"
-    does: Optional[Definition] = None           # its Python, compiled with PARAMETERS[kind]
+    does: Optional[Definition] = None           # its body, in the language `does in` names
     words: Optional[Definition] = None          # a statement's words, as patterns
     file: Optional[object] = None               # the file that declared it; None: built in
     built_in: bool = False
@@ -76,23 +77,12 @@ class Entry:
     # the entry of another file it replaces: it takes its place only with `replaces FILE`
     replaced: Optional["Entry"] = None
 
-    def accepts(self, flag: str) -> bool:
-        """Whether this language takes the flag: def and python take every flag; another
-        language, those its `flags` field lists."""
-        if self.built_in:
-            return True
-        return flag in [f.strip() for f in self.fields.get("flags", "").split(",") if f.strip()]
-
 
 def built_in() -> dict:
     """The kernel a program starts with (the keys that don't change with what runs)."""
     from collections import defaultdict
     kernel = {kind: {} for kind in KINDS}
     kernel.update(aliases={}, files={}, shared={}, store=defaultdict(dict))
-    for name in ("def", "python"):
-        kernel["language"][name] = Entry("language", name, built_in=True)
-    for name in ("written", "regex"):
-        kernel["flag"][name] = Entry("flag", name, built_in=True)
-    for name in ("use", "comment", "argument", "indent", "error"):
-        kernel["statement"][name] = Entry("statement", name, built_in=True)
+    kernel["language"]["python"] = Entry("language", "python", built_in=True)
+    kernel["statement"]["use"] = Entry("statement", "use", built_in=True)
     return kernel

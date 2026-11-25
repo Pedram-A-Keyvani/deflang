@@ -35,19 +35,19 @@ def check_bodies(engine, path, started):
         if definition.language != "python":
             continue
         try:
-            definition.function("self, BODY, VAR, fill" if definition.is_language else "self, a")
+            definition.function()
         except DefException as error:
             engine.problems.append((path, number, " ".join(map(str, error.args))))
 
 
 def check_entries(engine, path):
     """Compile the `does` of the file's entries, so a syntax error shows on its entry's line."""
-    from deflang.kernel import KINDS, PARAMETERS
+    from deflang.kernel import KINDS
     for kind in KINDS:
         for entry in engine.kernel[kind].values():
-            if entry.file == path and entry.does is not None:
+            if entry.file == path and entry.does is not None and entry.does.python:
                 try:
-                    entry.does.function(PARAMETERS[kind])
+                    entry.does.function()
                 except DefException as error:
                     engine.problems.append((path, entry.line, " ".join(map(str, error.args))))
 
@@ -69,15 +69,15 @@ def _walk(engine, node, strict: bool):
         if not _known(engine, node.name) and (strict or _WORDS.fullmatch(node.name)):
             raise DefException(f"unknown name '{node.name}'")
     elif isinstance(node, Call):
-        if not node.definition.as_written:
+        if node.definition.reads_values:
             for argument in node.arguments:
                 _walk(engine, argument, strict)
             return
-        if node.definition.language is None:
+        if node.definition.language == "def":
             # a def-lang body: its lines with the words put in, as when it runs
             for line in node.definition.lines():
                 text = SLOT_REGEX.sub(lambda m: node.arguments[int(m.group(1))], line).strip()
-                if text and text != node.text.strip():
+                if text and not text.startswith(node.definition.comment) and text != node.text.strip():
                     try:
                         _walk(engine, engine._parser.parse(text), strict=False)
                     except RecursionError:

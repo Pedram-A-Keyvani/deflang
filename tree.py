@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Union
 
-from deflang.definition import Definition, Match
+from deflang.definition import Definition, Match, read_value
 from deflang.exception import DefException
 from deflang.values import as_text, parse_number
 
@@ -38,15 +38,12 @@ class Name:
 @dataclass
 class Call:
     definition: Definition
-    arguments: List[Union["Node", str]]  # source text for `as written` defs
+    arguments: List[Union["Node", str]]  # a node, or text kept as its words (read_argument)
     text: str
     lost: bool = False  # read the best it could, but an argument is no value
 
     def evaluate(self, engine: "Execute"):
-        if self.definition.as_written:
-            values = list(self.arguments)
-        else:
-            values = [argument.evaluate(engine) for argument in self.arguments]
+        values = [argument if isinstance(argument, str) else argument.evaluate(engine) for argument in self.arguments]
         return engine.call(self.definition, values, self.text)
 
 
@@ -63,9 +60,9 @@ def _edges(match):
 
 
 def is_sentence(match, text: str) -> bool:
-    """An `as written` def that starts the line with two or more fixed words, like
-    `api ... runs ...`, `all of ... are ...`, `page ... shows ...`: a sentence."""
-    return (match.definition.as_written and len(match.keyword_spans) >= 2
+    """A definition that keeps its arguments as words and starts the line with two or
+    more fixed words, like `api ... runs ...`, `all of ... are ...`: a sentence."""
+    return (not match.definition.reads_values and len(match.keyword_spans) >= 2
             and _edges(match)[0] == len(text) - len(text.lstrip()))
 
 
@@ -145,17 +142,23 @@ class Parser:
 
     def _call(self, best: Match, text: str, strings: List[str]) -> "Call":
         arguments = best.arguments
-        if best.definition.as_written:
-            nodes = [self._unmask(a, strings) for a in arguments]
+        if best.definition.read_argument is read_value:
+            nodes = [self._parse(a, strings) for a in arguments]  # the kernel's way: as expressions
         else:
-            nodes = [self._parse(a, strings) for a in arguments]
+            # its own way (a flag changed it): it gets the words, and `read` reads them
+            nodes = [best.definition.read_argument(self._unmask(a, strings), self._read_text) for a in arguments]
         return Call(best.definition, nodes, self._unmask(text, strings))
+
+    def _read_text(self, text: str):
+        """Text read as an expression: the default way an argument is read."""
+        masked, strings = self._mask_strings(text)
+        return self._parse(masked, strings)
 
     def _lost(self, node: "Call") -> bool:
         """An argument that reads as no value: a name that is no variable."""
-        if node.definition.as_written:
-            if node.definition.language is not None:
-                return False  # a Python body: what it does with the words is its own
+        if not node.definition.reads_values:
+            if node.definition.language != "def":
+                return False  # Python, ...: what its body does with the words is its own
             # a def-lang body runs the words as code: they must read as a value
             arguments = []
             for text in node.arguments:
@@ -187,9 +190,9 @@ class Parser:
            `a is 2 + 3` is `a is (2 + 3)`.
         """
         definitions = self.engine.definitions
-        # an internal def is seen only by the lines of its own file
+        # which definitions this file sees: each one's `seen_by` says
         here = self.engine._variables.file
-        candidates: List[Match] = [m for d in definitions if not d.internal or d.file == here for m in d.matches(text)]
+        candidates: List[Match] = [m for d in definitions if d.seen_by(here) for m in d.matches(text)]
         if not candidates:
             return []
         spans = [c.keyword_spans for c in candidates]
