@@ -264,7 +264,8 @@ In `repeat A0 times : A1`:
 - **arguments:** `A0`, `A1`: whatever stands in their place.
 
 Words need spaces between them; symbols don't (`2+3` matches `A0 + A1`). In a pattern,
-write a space around a symbol too: `[ A0 ] first`, not `[A0] first`.
+write a space around a symbol too: `[ A0 ] first`, not `[A0] first`; only right after
+an argument, a symbol may follow without one: `A0 and A1, as A2`.
 
 **Naming:** a definition that gives a value reads best as a thing (`A0 plus the rate`,
 `total of A0 and A1`); one that does something, as a command (`say A0`,
@@ -546,7 +547,9 @@ say 4 doubled
 
 - The values go in as code: `as_code(value)` writes a value the way def-lang reads it
   back (a text with its quotes). A definition that keeps its arguments' words gets
-  the words as they were written.
+  the words as they were written. (The language library's `def` goes further: a value
+  that isn't a number, true or false comes in by its name, a variable of the call
+  named `A0`, `A1`, …, so a text never joins the words around it.)
 - `self.run_lines(text, definition)` runs lines the way a file's lines run, with the
   indent and comment marker the definition was written with: each line on its level,
   comments skipped. It gives the value of the last line that has one.
@@ -1167,6 +1170,7 @@ changed as `self[...]`; what it does are its methods.
 | `as_text(value)` | the value as text a person reads (what `self.say` prints) |
 | `as_code(value)` | the value written as def-lang code, to put in text for `self.run` |
 | `Code(text)` | marks text as code, so another language puts it in without escaping it |
+| `Line(text, file)` | a line kept to run later, where it was written: its text, and `line.file` (a definition whose arguments are kept, like the flag `later`'s) |
 | `DefException(message)` | raise it to stop with a def-lang error |
 
 | Value | `as_text` | `as_code` |

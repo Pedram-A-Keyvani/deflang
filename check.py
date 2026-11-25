@@ -15,6 +15,7 @@ import re
 from deflang.definition import SLOT_REGEX
 from deflang.exception import DefException
 from deflang.tree import Call, Name
+from deflang.values import Line
 
 _VARIABLES = r"""self\[\s*["']variables["']\s*\]"""
 _NAME = re.compile(_VARIABLES + r"(?:\[|\.setdefault\(|\.get\()\s*a\[(\d+)\]")
@@ -72,6 +73,15 @@ def _walk(engine, node, strict: bool):
         if node.definition.reads_values:
             for argument in node.arguments:
                 _walk(engine, argument, strict)
+            return
+        if node.definition.language == "def" and any(isinstance(a, Line) for a in node.arguments):
+            # lines kept for later (the flag `later`): the caller's code, read here; the
+            # body runs on its own, in its own file
+            for text in node.arguments:
+                try:
+                    _walk(engine, engine._parser.parse(text), strict=False)
+                except RecursionError:
+                    pass
             return
         if node.definition.language == "def":
             # a def-lang body: its lines with the words put in, as when it runs

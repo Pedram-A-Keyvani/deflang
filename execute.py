@@ -617,11 +617,20 @@ class Execute:
         NAME` names, used if it isn't yet; or, for a library's own name, its folder, so
         every file of it (its main.def used, if it has one)."""
         name = name.strip()
-        if "/" not in name and self._local(name) is None and (folder := self._library_folder(name)) is not None:
-            if (folder / "main.def").is_file():
-                self._import(name)
-            return folder.resolve()
-        return self._import(name)
+        # named the way `use` names it in the file of the line, also when a definition's
+        # body runs later, called from another file
+        here = self._variables.file
+        if here is not None:
+            self._import_dirs.append(Path(here).parent)
+        try:
+            if "/" not in name and self._local(name) is None and (folder := self._library_folder(name)) is not None:
+                if (folder / "main.def").is_file():
+                    self._import(name)
+                return folder.resolve()
+            return self._import(name)
+        finally:
+            if here is not None:
+                self._import_dirs.pop()
 
     def in_scope(self, file) -> bool:
         """Whether the definitions of `file` are in the scope of the line being read: a

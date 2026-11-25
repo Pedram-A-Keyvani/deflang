@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 from deflang.exception import DefException
-from deflang.values import Code, as_text, number, parse_number, as_code
+from deflang.values import Code, Line, as_text, number, parse_number, as_code
 
 # where argument N goes in a def-lang body line
 _SLOT = "{}"
@@ -72,6 +72,9 @@ def readable_to_regex(text: str, argument_name: str) -> str:
             end += 1
         word = text[pos:end]
         pos = end
+        # an argument with a symbol right after it, like `A1,` in `A0 and A1, as A2`
+        if (m := re.fullmatch(rf"({re.escape(argument_name)}\d+)([^\w\s\"]+)", word)) is not None:
+            word, pos = m.group(1), end - len(m.group(2))  # the symbol is the next word
         if m := argument.fullmatch(word):
             tokens.append((False, rf"(?P<a{m.group(1)}>[\s\S]+)"))
         elif (m := argument.fullmatch(word[1:-1])) and word[0] == word[-1] == '"':
@@ -195,6 +198,7 @@ class Definition:
                 "as_code": as_code,
                 "as_text": as_text,
                 "Code": Code,
+                "Line": Line,
                 "DefException": DefException,
             }
             try:

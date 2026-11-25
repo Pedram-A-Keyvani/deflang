@@ -240,3 +240,9 @@ sample and guide listing must give the same results before and after.
   `self["entry"]["scope"]`, for the rest of its `does` and the lines under it: the
   statement library's `in the scope of web/http`, with the lines under it, or
   `in the scope of io/audio, LINE`. A definition's own lines are in their own scope.
+- **Lines kept for later**: a definition's `read_argument` may keep an argument as a
+  `Line`, its text with the file it was written in (the flag `later`: `set arguments
+  to kept`); the body runs it there later, as often as it needs (`the value of A0`).
+  The web server keeps its pages and apis this way, in def.
+- **A pattern's argument with a symbol right after it** (`A0 and A1, as A2`) is the
+  argument, then the symbol.

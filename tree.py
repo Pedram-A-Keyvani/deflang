@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, List, Union
 
 from deflang.definition import Definition, Match, read_value
 from deflang.exception import DefException
-from deflang.values import as_text, parse_number
+from deflang.values import Line, as_text, parse_number
 
 if TYPE_CHECKING:
     from core.execute import Execute
@@ -159,8 +159,8 @@ class Parser:
     def _lost(self, node: "Call") -> bool:
         """An argument that reads as no value: a name that is no variable."""
         if not node.definition.reads_values:
-            if node.definition.language != "def":
-                return False  # Python, ...: what its body does with the words is its own
+            if node.definition.language != "def" or any(isinstance(a, Line) for a in node.arguments):
+                return False  # Python, ...: what its body does with the words is its own; a line kept for later runs later
             # a def-lang body runs the words as code: they must read as a value
             arguments = []
             for text in node.arguments:

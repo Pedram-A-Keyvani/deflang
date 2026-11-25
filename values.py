@@ -13,6 +13,16 @@ class Code(str):
     into another def as it is, never escaped."""
 
 
+class Line(str):
+    """A line kept to run later, where it was written (a definition whose arguments are
+    kept, like the flag `later`'s): its text, and `line.file`, the file it is in."""
+
+    def __new__(cls, text: str, file=None):
+        line = super().__new__(cls, text)
+        line.file = file
+        return line
+
+
 def parse_number(text: str):
     """Return the number written in `text`, or None if it isn't a number literal."""
     text = text.strip()
