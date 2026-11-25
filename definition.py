@@ -21,7 +21,7 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Callable, List, Optional
+from typing import Callable, Iterable, List, Optional
 
 from deflang.exception import DefException
 from deflang.values import Code, Line, as_text, number, parse_number, as_code
@@ -175,11 +175,13 @@ class Definition:
         self.body.append(argument_regex(argument_name).sub(slot, line))
         self._function = None
 
-    def matches(self, text: str) -> List[Match]:
+    def matches(self, text: str, pattern_indices: Optional[Iterable[int]] = None) -> List[Match]:
+        """Run all patterns, or only the ones the language's word index picked."""
+        indices = range(len(self.patterns)) if pattern_indices is None else pattern_indices
         return [
             Match(self, m, index)
-            for index, pattern in enumerate(self.patterns)
-            if (m := pattern.fullmatch(text)) is not None
+            for index in indices
+            if (m := self.patterns[index].fullmatch(text)) is not None
         ]
 
     def lines(self) -> List[str]:

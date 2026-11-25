@@ -227,10 +227,14 @@ class Parser:
         5. Then the def defined first (see the order in the core library), so
            `a is 2 + 3` is `a is (2 + 3)`.
         """
-        definitions = self.engine._language.refresh(self.engine.definitions, self.engine.kernel["aliases"])
-        # which definitions this file sees: each one's `seen_by` says
-        here = self.engine._variables.file
-        candidates: List[Match] = [m for d in definitions if d.seen_by(here) for m in d.matches(text)]
+        language = self.engine._language
+        definitions = language.refresh(self.engine.definitions, self.engine.kernel["aliases"])
+        # the word index picks the patterns that could match this line; the regexes decide
+        candidates: List[Match] = []
+        for definition_index, pattern_indices in language.candidate_patterns(text).items():
+            definition = definitions[definition_index]
+            if definition.seen_by(self.engine._variables.file):
+                candidates.extend(definition.matches(text, pattern_indices))
         if not candidates:
             return []
         spans = [c.keyword_spans for c in candidates]
