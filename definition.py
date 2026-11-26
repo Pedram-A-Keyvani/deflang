@@ -161,6 +161,16 @@ class Match:
 
 
 @dataclass
+class Hook:
+    """A piece of behavior an entry adds to a cycle: a Definition, not a Python closure,
+    so it travels in a language snapshot and a compiled build."""
+    cycle: str
+    phase: str
+    definition: "Definition"
+    owner: str  # the declaring entry: FILE/NAME, or NAME for lines typed in
+
+
+@dataclass
 class Definition:
     source: str
     language: Optional[str] = None  # the body's language: def, python, html, ...
@@ -179,6 +189,7 @@ class Definition:
     visibility: str = "everywhere"
     patterns: List[re.Pattern] = field(default_factory=list)
     body: List[str] = field(default_factory=list)
+    hooks: List[Hook] = field(default_factory=list, repr=False)  # cycle hooks an entry attached
     _function: Optional[Callable] = field(default=None, repr=False)
 
     @property

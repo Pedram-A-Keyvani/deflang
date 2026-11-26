@@ -11,11 +11,12 @@ import ast
 import contextlib
 import os
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Callable, List, Optional
 
 from deflang import kernel as kernels
-from deflang.definition import SLOT_REGEX, Definition
+from deflang.definition import SLOT_REGEX, Definition, Hook
 from deflang.exception import DefException
 from deflang.tree import Parser
 from deflang.kernel import DEFAULT_COMMENT, DEFAULT_INDENT, new_place
@@ -30,6 +31,7 @@ _SAME = object()  # own_variables(): the file of the lines running now
 _DEFINITION = re.compile(r"(\w+)(\[[^\]]*\])?\s+(\S.*)")
 # an entry: `language html`, `modifier internal`, `statement comment`
 _ENTRY = re.compile(r"(language|flag|modifier|statement)(?:\s+(.*))?")
+_HOOK = re.compile(r"(\w+)\s+(\w+)\s+in\s+(\w+)(\[[^\]]*\])?")
 _WORD = re.compile(r"(\w+)\s+(\S.*)")
 
 
@@ -88,6 +90,10 @@ class Execute:
         # what a def-lang body's bound argument names stand for in its error messages:
         # the words written at the call, innermost body last (see display_values)
         self._display: List[dict] = []
+        # the cycles running now, innermost last: self["cycle"] (see cycle() and call())
+        self._cycles: List[dict] = []
+        self._cycle_id = 0
+        self._in_hook = 0  # hook bodies don't call their own hooks again
         self._line_number = 0  # the line of the file being read, for an entry's place
         self.reloading = False  # reload(): only what defines runs again
         self.clean()
@@ -123,6 +129,8 @@ class Execute:
             return "checking" if self.checking else "reloading" if self.reloading else "running"
         if key == "entry":
             return self._entries[-1] if self._entries else None
+        if key == "cycle":
+            return self._cycles[-1] if self._cycles else None
         if key in self.kernel:
             return self.kernel[key]
         raise DefException(f"the kernel has no '{key}' (it has: {', '.join(self.keys())})")
@@ -323,6 +331,12 @@ class Execute:
     def _end_entry(self):
         """The entry being read ends: one that replaces another file's must have said so."""
         entry, self._current_entry = self._current_entry, None
+        if entry is not None and entry.kind == "statement" and entry.does is not None:
+            # a statement's hooks act around its `does`, whenever it runs. Hooks may be
+            # declared before or after `does`, so add only the ones not there yet.
+            for hook in entry.hooks:
+                if not any(old is hook for old in entry.does.hooks):
+                    entry.does.hooks.append(hook)
         if entry is not None and entry.replaced is not None and "replaces" not in entry.fields:
             old = entry.replaced
             error = DefException(f"{entry.kind} {entry.name} is there already (declared in {old.file.name if old.file else 'the program'}): "
@@ -347,12 +361,13 @@ class Execute:
         """A line under an entry: a field one level in, or `does`'s Python further in."""
         expanded = self._expand_tabs(line)
         width = len(expanded) - len(expanded.lstrip())
-        if entry.reading_does and width > self._indent:
-            entry.does.add_line(expanded, self._argument_name)
+        if entry.reading_definition is not None and width > self._indent:
+            entry.reading_definition.add_line(expanded, self._argument_name)
             return None
         text = line.strip()
         if text.startswith(self._comment):
             return None
+        entry.reading_definition = None
         entry.reading_does = False
         if width != self._indent:
             raise DefException(f"the fields of {entry.kind} {entry.name} are one level in: {text}")
@@ -373,7 +388,28 @@ class Execute:
                                     indent=self._indent, comment=self._comment, in_place=True)
             entry.does.flags = self._flags(m.group(2), m.group(1))
             for name, words in entry.does.flags.items():
-                self._do(self.kernel["flag"][name], {"definition": entry.does}, words)
+                self._act(self.kernel["flag"][name], {"definition": entry.does}, words)
+            entry.reading_definition = entry.does
+            entry.reading_does = True
+        elif found == "hook":
+            m = _HOOK.fullmatch(value)
+            if m is None:
+                raise DefException(f"`hook` says CYCLE PHASE in LANGUAGE, like `hook call start in python`: not `hook {value}`")
+            cycle, phase, language = m.group(1), m.group(2), m.group(3)
+            if cycle not in kernels.CYCLES:
+                raise DefException(f"unknown cycle '{cycle}' (the cycles are: {', '.join(kernels.CYCLES)})")
+            if phase not in kernels.PHASES:
+                raise DefException(f"unknown phase '{phase}' (the phases are: {', '.join(kernels.PHASES)})")
+            if language not in self.kernel["language"]:
+                raise DefException(f"hook in {language}: there is no language {language} yet (use language/{language})")
+            body = Definition(f"{entry.kind} {entry.name} hook {cycle} {phase}", language=language,
+                              file=entry.file, indent=self._indent, comment=self._comment, in_place=True)
+            body.flags = self._flags(m.group(4), language)
+            for name, words in body.flags.items():
+                self._act(self.kernel["flag"][name], {"definition": body}, words)
+            owner = f"{self._use_name(entry.file)}/{entry.name}" if entry.file is not None else entry.name
+            entry.hooks.append(Hook(cycle, phase, body, owner))
+            entry.reading_definition = body
             entry.reading_does = True
         elif found == "words":
             entry.words = Definition(value, language="python", file=entry.file)
@@ -388,6 +424,13 @@ class Execute:
                 raise DefException(f"{entry.kind} {entry.name} was declared in {self._use_name(old.file)}, not in {value or 'nothing'}: replaces {self._use_name(old.file)}")
             self.kernel[entry.kind][entry.name] = entry  # from here on, it is the one
         entry.fields[found] = value
+        return None
+
+    def _act(self, entry, acts_on: dict, arguments=()):
+        """Let an entry's `does` act, if it has one. An entry whose capability is only
+        cycle hooks needs no `does`; one with neither is still an error."""
+        if entry.does is not None or not entry.hooks:
+            return self._do(entry, acts_on, arguments)
         return None
 
     def _do(self, entry, acts_on: dict, arguments=()):
@@ -439,7 +482,8 @@ class Execute:
         if (m := _DEFINITION.fullmatch(rest)) and m.group(1) in self.kernel["language"]:
             definition = self._define(m.group(1), m.group(2), m.group(3), pending)
             for entry in modifiers:
-                self._do(entry, {"definition": definition})
+                self._act(entry, {"definition": definition})
+                definition.hooks.extend(entry.hooks)
             self._language.changed()  # a modifier may change how the def reads
             return None, True
         name = re.match(r"[\w-]+", rest).group(0)
@@ -499,7 +543,14 @@ class Execute:
         definition.flags = flags
         # the flags first: they may change how the pattern is read (its read_pattern)
         for name, words in flags.items():
-            self._do(self.kernel["flag"][name], {"definition": definition}, words)
+            entry = self.kernel["flag"][name]
+            self._act(entry, {"definition": definition}, words)
+            definition.hooks.extend(entry.hooks)
+        # a language's hooks act on every definition written in it; an entry's own
+        # `does` is not one of them (or its hooks would hook their own reader)
+        language_entry = self.kernel["language"].get(language)
+        if language_entry is not None:
+            definition.hooks.extend(language_entry.hooks)
         definition.add_patterns(pattern.strip(), self._argument_name)
         self.definitions.append(definition)
         self._current_def = definition
@@ -706,9 +757,68 @@ class Execute:
     # ------------------------------------------------------------ used by the tree and by def bodies
 
     def call(self, definition: Definition, arguments: list, text: str):
-        """Run a definition: a Python body itself; another language's body by that
-        language's `does`, which acts on it (self["entry"]: its body, its values, ...).
-        The definition's value is what that `does` gives, or else the body it leaves."""
+        """Run a definition, with the `call` cycle's hooks around it."""
+        if self._in_hook:
+            return self._call(definition, arguments, text)  # a hook body doesn't hook itself
+        with self.cycle("call", text=text, definition=definition, arguments=arguments):
+            return self._call(definition, arguments, text)
+
+    @contextlib.contextmanager
+    def cycle(self, name: str, **values):
+        """One lifecycle cycle: `start` hooks, the operation, then `end` or `error`.
+        `self["cycle"]` is the cycle running now; its `state` is hook scratch space."""
+        self._cycle_id += 1
+        cycle = {"id": self._cycle_id, "name": name, "phase": "start", "text": None,
+                 "definition": None, "file": self["file"], "owner": None,
+                 "state": defaultdict(dict),
+                 # entry `does` bodies are part of the engine, not a call a library wrote
+                 "error": None, "depth": sum(1 for old in self._cycles if old["name"] == name
+                                             and not getattr(old.get("definition"), "in_place", False))}
+        cycle.update(values)
+        self._cycles.append(cycle)
+        try:
+            self._run_hooks(name, "start", cycle)
+            cycle["phase"] = "body"
+            try:
+                yield cycle
+            except BaseException as error:
+                cycle["error"] = error
+                cycle["phase"] = "error"
+                self._run_hooks(name, "error", cycle)
+                raise
+            cycle["phase"] = "end"
+            self._run_hooks(name, "end", cycle)
+        finally:
+            self._cycles.pop()
+
+    def _run_hooks(self, name: str, phase: str, cycle: dict):
+        """Run the hooks of this cycle and phase, for this definition. End and error
+        hooks run in reverse order, so they unwind what the start hooks set up."""
+        hooks = list(self.kernel["hooks"][name][phase])
+        hooks += list(getattr(cycle["definition"], "hooks", None) or ())
+        if phase != "start":
+            hooks.reverse()
+        selected = [hook for hook in hooks if hook.cycle == name and hook.phase == phase]
+        if not selected:
+            return
+        self._in_hook += 1
+        try:
+            for hook in selected:
+                cycle["owner"] = hook.owner
+                try:
+                    if hook.definition.language == "python":
+                        hook.definition.function()(self, [])
+                    else:
+                        self.run_lines("\n".join(hook.definition.lines()), hook.definition)
+                finally:
+                    cycle["owner"] = None
+        finally:
+            self._in_hook -= 1
+
+    def _call(self, definition: Definition, arguments: list, text: str):
+        """A Python body itself; another language's body by that language's `does`, which
+        acts on it (self["entry"]: its body, its values, ...). The definition's value is
+        what that `does` gives, or else the body it leaves."""
         # the lines a def runs have levels of their own; its answer still comes out. They
         # are in the scope of the line that calls it (a Python body may run its words),
         # until they get variables of their own (see own_variables)

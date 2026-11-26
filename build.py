@@ -133,14 +133,23 @@ def load(artifact: Path, execute: Execute) -> List[Tuple]:
     execute._set_definitions(list(data.get("definitions", ())))
 
     # library-local hooks are modes in a build; restore them with this engine, so
-    # `later`'s lines remember the file of the line that calls them
-    for definition in execute.definitions:
+    # `later`'s lines remember the file of the line that calls them. Hook bodies are
+    # Definitions too, and travel inside the definition they act on.
+    def restore(definition):
+        if definition is None:
+            return
         definition.restore_hooks(execute)
+        for hook in getattr(definition, "hooks", ()):
+            restore(hook.definition)
+
+    for definition in execute.definitions:
+        restore(definition)
     for kind in kernels.KINDS:
         for entry in execute.kernel[kind].values():
             for definition in (getattr(entry, "does", None), getattr(entry, "words", None)):
-                if definition is not None:
-                    definition.restore_hooks(execute)
+                restore(definition)
+            for hook in getattr(entry, "hooks", ()):
+                restore(hook.definition)
     execute._language.refresh(execute.definitions, execute.kernel["aliases"])
     return [tuple(line) for line in data.get("lines", ())]
 

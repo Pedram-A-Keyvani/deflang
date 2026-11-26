@@ -81,12 +81,18 @@ kernel = {
   "program":     the program's folder
   "answer":      the last question's answer
   "store":       { LIBRARY: {...} },  # a library's own state, made on first use
+  "cycle":       the cycle running now, or None: its "name", "phase", "text",
+                 "definition", "file", "owner", "state", "error" and "depth".
+                 "state" is a dict of dicts, one for each hook owner.
+  "hooks":       { CYCLE: { "start": [], "end": [], "error": [] } },  # global hooks
 }
 ```
 
-What the interpreter does stays a method: `self.run(text)`, `self.say(value)`, and for
-a web server `self.own_variables(file)`, `self.changed_files()`, `self.reload(path)`.
-Only `self["answer"]` is set; every other part is changed in place.
+What the interpreter does stays a method: `self.run(text)`, `self.say(value)`,
+`self.cycle(name)` (the hook points), and for a web server `self.own_variables(file)`,
+`self.changed_files()`, `self.reload(path)`. Only `self["answer"]` is set; every other
+part is changed in place. A hook reads its owner from `self["cycle"]["owner"]` and keeps
+whatever it needs for later phases under `self["cycle"]["state"][owner]`.
 
 **An entry** is declared in a `.def` file, the same way in every kind: the kind and a
 one-word name, then its fields one level in. Its help is the comment lines right above
@@ -123,6 +129,7 @@ statement comment
   | Field | Of | Is |
   |---|---|---|
   | `does in LANGUAGE[FLAGS]` | every kind | what the entry does, in that language (`def`, `python`, …), one level in; flags as on a definition line (`does in def[written]`) |
+  | `hook CYCLE PHASE in LANGUAGE` | every kind | behavior added to a cycle: `call`, `file`, `line`, `define`, `body`, `scope`, with `start`, `end` or `error`; its body one level in. A modifier's hooks act on the definition it modifies, a flag's on the definition using it, a statement's on its `does`, a language's on definitions written in it. |
   | `words` | a statement | the words it matches, written like a pattern: `comment is A0` |
   | `reading` | a statement | `yes` if its `does` runs while lines are read (as in `check` and `compile`), not when the program runs: `comment is`, `argument is`, `indent`, `in the scope of` |
   | `editor` | a language | VS Code's language id, for coloring and formatting its bodies |

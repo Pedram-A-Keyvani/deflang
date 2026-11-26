@@ -42,13 +42,18 @@ def check_bodies(engine, path, started):
 
 
 def check_entries(engine, path):
-    """Compile the `does` of the file's entries, so a syntax error shows on its entry's line."""
+    """Compile the `does` and hook bodies of the file's entries, so a syntax error
+    shows on its entry's line."""
     from deflang.kernel import KINDS
     for kind in KINDS:
         for entry in engine.kernel[kind].values():
-            if entry.file == path and entry.does is not None and entry.does.python:
+            if entry.file != path:
+                continue
+            bodies = ([entry.does] if entry.does is not None and entry.does.python else [])
+            bodies += [hook.definition for hook in entry.hooks if hook.definition.python]
+            for body in bodies:
                 try:
-                    entry.does.function()
+                    body.function()
                 except DefException as error:
                     engine.problems.append((path, entry.line, " ".join(map(str, error.args))))
 
