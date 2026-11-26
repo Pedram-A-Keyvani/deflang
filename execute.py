@@ -247,10 +247,15 @@ class Execute:
         return result
 
     def _compiled_line(self, line: str, kind: str):
-        """Remember a program line for a compiled build: "define" is already in the
-        artifact, "run" has to be replayed when it is loaded."""
-        if self.compiling and not self._import_files:
-            self.compiled_lines.append((kind, self._raw_line or line))
+        """Remember a line for a compiled build: "define" is already in the artifact,
+        "run" has to be replayed when it is loaded. A used file's definitions are in
+        the artifact too, but its runtime lines still have to run, in their own file."""
+        if not self.compiling or self._acting:
+            return
+        file = self._variables.file
+        if file is not None and kind == "define":
+            return
+        self.compiled_lines.append((kind, self._raw_line or line, file, self._line_number))
 
     def _line(self, line: str, level: int):
         """A line without its indentation: (its value, whether it was a statement).
@@ -373,6 +378,8 @@ class Execute:
         elif found == "words":
             entry.words = Definition(value, language="python", file=entry.file)
             entry.words.add_patterns(value, self._argument_name)
+        elif found == "reading":
+            entry.reading = value.strip().lower() in ("yes", "true", "1")
         elif found == "replaces":
             old = entry.replaced
             if old is None:
@@ -403,6 +410,10 @@ class Execute:
         `does` and of the lines under it."""
         for entry in self.kernel["statement"].values():
             if entry.words is not None and (found := entry.words.matches(line)):
+                if self.compiling and not self._acting and not entry.reading:
+                    # a runtime statement: recorded by _line, replayed when the build runs
+                    self._answer = True  # its lines under it are read too
+                    return None, False
                 acts_on = {"scope": []}
                 scope = (level, acts_on["scope"])
                 self._scope_levels = self._scope_levels + [scope]
@@ -540,6 +551,9 @@ class Execute:
         self._variables = Variables(path, place, self.kernel["shared"])
         self._import_dirs.append(path.parent)
         self._import_files.append(path)
+        if self.compiling:
+            # the artifact needs the file's context for the lines it records below
+            self.compiled_lines.append(("enter", "", path, 0))
         started = {}  # each def of this file -> the line it starts on, to check its body
         skipping = False
 
@@ -580,6 +594,8 @@ class Execute:
             (self._answers, self._variables, self._call_indent, self._call_comment, self._entries, self._acting,
              self._scope_base, self._scope_levels) = saved
             self._current_def = None
+            if self.compiling:
+                self.compiled_lines.append(("leave", "", path, 0))
 
     def changed_files(self) -> List[Path]:
         """The imported files saved since they were read."""

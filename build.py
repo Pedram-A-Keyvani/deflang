@@ -1,24 +1,28 @@
 """Ahead-of-time builds of a def-lang program.
 
-`compile` reads a program the way `check` does: definitions, entries, statements
-and imports build the language, but expressions are recorded, not evaluated. The
-artifact is a pickle of the same kernel state the interpreter would have, plus
-the program lines that still have to run; `load` puts it into a fresh Execute,
-so compile and run share one parser and one evaluator (see KERNEL.md).
+`compile` reads a program the way `check` does: definitions, entries, imports and
+statements marked `reading` build the language. Expressions and other statements
+are recorded, not evaluated, so a build neither prints nor serves nor stops the
+program. The artifact is a pickle of the same kernel state the interpreter would
+have, plus the lines that still have to run and the file contexts they ran in;
+`load` puts it into a fresh Execute, so compile and run share one parser and one
+evaluator (see KERNEL.md).
 
 A JSON manifest next to the artifact records the sources it came from, so
 `run` can tell whether a build is still fresh.
 """
 import json
 import pickle
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from deflang import kernel as kernels
 from deflang.exception import DefException
 from deflang.execute import Execute
+from deflang.values import Variables
 
-FORMAT = 1
+FORMAT = 2
 SUFFIX = ".defbuild"
 
 
@@ -56,7 +60,8 @@ def compile_program(name: str, output: Optional[str] = None) -> Path:
     execute = Execute(output=lambda value: None)  # a build prints or serves nothing
     execute.program_dir = file.parent
     execute.compiling = True
-    for line in file.read_text().splitlines():
+    for number, line in enumerate(file.read_text().splitlines(), start=1):
+        execute._line_number = number
         execute.run(line)
 
     artifact = {
@@ -101,8 +106,8 @@ def fresh(artifact: Path) -> bool:
         return False
 
 
-def load(artifact: Path, execute: Execute) -> List[Tuple[str, str]]:
-    """Put a build into `execute`; return its (kind, line) program lines."""
+def load(artifact: Path, execute: Execute) -> List[Tuple]:
+    """Put a build into `execute`; return its (kind, line, file, number) lines."""
     if not artifact.is_file():
         raise DefException(f"no compiled program {artifact}")
     with artifact.open("rb") as stream:
@@ -111,6 +116,9 @@ def load(artifact: Path, execute: Execute) -> List[Tuple[str, str]]:
         raise DefException(f"{artifact} is a build of another def-lang version")
 
     execute.clean()
+    execute.compiling = False
+    execute.checking = False
+    execute.reloading = False
     execute.program_dir = Path(data["program"]).parent
     for kind in kernels.KINDS:
         execute.kernel[kind].clear()
@@ -137,10 +145,51 @@ def load(artifact: Path, execute: Execute) -> List[Tuple[str, str]]:
     return [tuple(line) for line in data.get("lines", ())]
 
 
-def run_lines(execute: Execute, lines: List[Tuple[str, str]], output=None):
+@contextmanager
+def _replay_file(execute: Execute, path: Optional[Path]):
+    """Read recorded lines as the file they came from, without reading it again."""
+    if path is None:  # the program itself: Execute already has its place
+        yield
+        return
+    path = Path(path)
+    saved = (execute._answers, execute._variables, execute._call_indent, execute._call_comment,
+             execute._entries, execute._acting, execute._scope_base, execute._scope_levels,
+             execute._current_def, execute._current_entry, execute._line_number)
+    execute._answers = []
+    execute._call_indent = execute._call_comment = None
+    execute._entries, execute._acting = [], False
+    execute._scope_base, execute._scope_levels = (), []
+    execute._current_def = execute._current_entry = None
+    execute._variables = Variables(path, execute._place(path), execute.kernel["shared"])
+    execute._import_dirs.append(path.parent)
+    execute._import_files.append(path)
+    try:
+        yield
+    finally:
+        execute._import_files.pop()
+        execute._import_dirs.pop()
+        (execute._answers, execute._variables, execute._call_indent, execute._call_comment,
+         execute._entries, execute._acting, execute._scope_base, execute._scope_levels,
+         execute._current_def, execute._current_entry, execute._line_number) = saved
+
+
+def run_lines(execute: Execute, lines: List[Tuple], output=None):
     """Run the lines a build recorded, with the same `Execute.run` as the interpreter."""
-    for kind, line in lines:
-        if kind == "run":
-            result = execute.run(line)
-            if result is not None and output is not None:
-                output(result)
+    contexts = []
+    try:
+        for kind, line, file, number in lines:
+            if kind == "enter":
+                context = _replay_file(execute, file)
+                context.__enter__()
+                contexts.append(context)
+            elif kind == "leave":
+                if contexts:
+                    contexts.pop().__exit__(None, None, None)
+            elif kind == "run":
+                execute._line_number = number
+                result = execute.run(line)
+                if result is not None and output is not None:
+                    output(result)
+    finally:
+        for context in reversed(contexts):
+            context.__exit__(None, None, None)

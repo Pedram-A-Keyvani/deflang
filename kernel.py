@@ -42,7 +42,8 @@ KINDS = ("language", "flag", "modifier", "statement")
 #   a flag:      "definition" (being made, before its pattern is read); and the words
 #                in its places, A0, A1, ..., when it is written by `words`
 #   a modifier:  "definition" (just made), or "name"
-#   a statement: its words, as the arguments of its `does` (A0, A1, ...)
+#   a statement: its words, as the arguments of its `does` (A0, A1, ...); "reading" says
+#                its `does` runs while lines are read, as in check and compile
 # A `does` runs where the entry acts: in the variables of the line.
 
 # the fields each kind may have (`does in LANGUAGE` and `replaces` are every kind's)
@@ -50,7 +51,7 @@ FIELDS = {
     "language": {"does", "editor", "replaces"},
     "flag": {"does", "words", "replaces"},
     "modifier": {"does", "replaces"},
-    "statement": {"does", "words", "replaces"},
+    "statement": {"does", "words", "replaces", "reading"},
 }
 
 # the keys of the tree that change with what runs; the rest are kept in one dict
@@ -74,6 +75,7 @@ class Entry:
     words: Optional[Definition] = None          # a statement's words, as patterns
     file: Optional[object] = None               # the file that declared it; None: built in
     built_in: bool = False
+    reading: bool = False                       # a statement that must run while lines are read
     line: int = 0                               # its line in that file
     reading_does: bool = False                  # while its `does` lines are read
     # the entry of another file it replaces: it takes its place only with `replaces FILE`

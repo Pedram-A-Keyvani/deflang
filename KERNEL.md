@@ -124,6 +124,7 @@ statement comment
   |---|---|---|
   | `does in LANGUAGE[FLAGS]` | every kind | what the entry does, in that language (`def`, `python`, …), one level in; flags as on a definition line (`does in def[written]`) |
   | `words` | a statement | the words it matches, written like a pattern: `comment is A0` |
+  | `reading` | a statement | `yes` if its `does` runs while lines are read (as in `check` and `compile`), not when the program runs: `comment is`, `argument is`, `indent`, `in the scope of` |
   | `editor` | a language | VS Code's language id, for coloring and formatting its bodies |
   | `words` | a flag | how it is written in the brackets, like a pattern: `cache A0 seconds`; without it, its name |
   | `replaces` | every kind | the file that declared the entry it replaces, as `use` names it: `replaces language/css` |
@@ -251,3 +252,25 @@ sample and guide listing must give the same results before and after.
   bundle of the everyday ones, used in the order that decides how a line is read. A
   library never decides where its inputs come from: the server takes its port from
   `server on port`, and the program says where that comes from.
+
+## 7. Compiled runs
+
+`def-lang compile PROGRAM [-o PATH]` reads a program without running it and writes
+`build/NAME.defbuild` (plus a JSON manifest of the files it read). The artifact holds
+the same kernel state the interpreter builds in memory: definitions, aliases, entries,
+file settings and the modes of the definitions' three hooks. Its lines are the program
+lines that still have to run; `def-lang run` loads the artifact and replays them through
+the same `Execute`, parser and evaluator, in the files they were read from. There is
+no second language implementation.
+
+`run` uses a fresh build when there is one; `--compiled` requires one, `--interpreter`
+ignores it, and `--debug` reads the sources in debug mode. `check` always reads the
+sources. A build is stale when any file it read has changed. Library-local functions
+(`written`, `regex`, `later`, `internal`) are kept as hook modes, and compiled Python
+bodies are rebuilt from their source when loaded.
+
+A statement with `reading yes` runs while a build is read, because how the following
+lines are read depends on it: `comment is`, `argument is`, `indent`, and `in the scope
+of`. Other statements (`error`, `` `…` ``, …) and expressions are recorded and run
+only when the artifact runs. Builds do not capture runtime values or writes back to
+themselves: edits and generated definitions change the live snapshot, not the file.
