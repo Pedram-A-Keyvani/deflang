@@ -84,7 +84,6 @@ kernel = {
   "cycle":       the cycle running now, or None: its "name", "phase", "text",
                  "definition", "file", "owner", "state", "error" and "depth".
                  "state" is a dict of dicts, one for each hook owner.
-  "hooks":       { CYCLE: { "start": [], "end": [], "error": [] } },  # global hooks
 }
 ```
 
@@ -129,12 +128,24 @@ statement comment
   | Field | Of | Is |
   |---|---|---|
   | `does in LANGUAGE[FLAGS]` | every kind | what the entry does, in that language (`def`, `python`, …), one level in; flags as on a definition line (`does in def[written]`) |
-  | `hook CYCLE PHASE in LANGUAGE` | every kind | behavior added to a cycle: `call`, `file`, `line`, `define`, `body`, `scope`, with `start`, `end` or `error`; its body one level in. A modifier's hooks act on the definition it modifies, a flag's on the definition using it, a statement's on its `does`, a language's on definitions written in it. |
+  | `hook CYCLE PHASE in LANGUAGE` | every kind | behavior added to a cycle: `file`, `line`, `define`, `call`, `body`, `scope`, with `start`, `end` or `error`; its body one level in. Declaring it does nothing by itself: put the entry in front of the line it acts on (`watched use part`, `watched say 1`, `watched def double A0`). |
   | `words` | a statement | the words it matches, written like a pattern: `comment is A0` |
   | `reading` | a statement | `yes` if its `does` runs while lines are read (as in `check` and `compile`), not when the program runs: `comment is`, `argument is`, `indent`, `in the scope of` |
   | `editor` | a language | VS Code's language id, for coloring and formatting its bodies |
   | `words` | a flag | how it is written in the brackets, like a pattern: `cache A0 seconds`; without it, its name |
   | `replaces` | every kind | the file that declared the entry it replaces, as `use` names it: `replaces language/css` |
+
+- **Cycles:** `file` wraps reading a used file; `define` wraps making a definition;
+  `call` wraps a definition call; `body` wraps running its body; `scope` wraps a
+  variable scope (a statement's, or `own_variables`); `line` wraps a statement or an
+  expression as it runs. Each has `start`, `end` and `error` phases, in that order;
+  `end` and `error` unwind in reverse hook order. `self["cycle"]["state"][owner]` is
+  scratch space for one hook to pass values to its later phases. Hooks are never
+  installed by declaring an entry: a modifier prefix turns them on for that one line,
+  and hooks on a definition (`call`, `body`, `line`, `scope`) come from the flags,
+  language or modifiers written on its definition line. A line hook runs on the lines
+  a build replays too; alias lines a library ran while the build was made are not
+  replayed as runtime lines.
 
 - **`does in LANGUAGE`** is what the entry does, in any language: `does in def`,
   `does in python`. The interpreter knows what an entry is from where it stands, and

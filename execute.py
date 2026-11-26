@@ -76,6 +76,7 @@ class Execute:
         self.compiling = False
         self.compiled_lines: List[tuple] = []
         self._raw_line = ""  # the line as written, for a compiled build's replay
+        self._reading_statement = False  # the statement just read builds the language, not runtime
         self.problems: List[tuple] = []  # (file, line, message)
         self.texts: dict = {}            # file -> its text, instead of what is on disk
         self._imported = set()
@@ -187,7 +188,9 @@ class Execute:
 
     # ------------------------------------------------------------ statements
 
-    def run(self, code: str):
+    def run(self, code: str, hooks=()):
+        """Run one line. `hooks` are the cycles a modifier on this line turned on;
+        a build's replay supplies them again from the line it recorded."""
         line = str(code).rstrip("\r\n")
         if not line.strip():
             return None
@@ -210,7 +213,7 @@ class Execute:
         outer = self._raw_line
         self._raw_line = line
         try:
-            return self._run_at(line.strip(), level)
+            return self._run_at(line.strip(), level, hooks)
         finally:
             self._raw_line = outer
 
@@ -226,7 +229,7 @@ class Execute:
         lead = line[:len(line) - len(line.lstrip())]
         return lead.replace("\t", " " * self._indent) + line[len(lead):]
 
-    def _run_at(self, line: str, level: int):
+    def _run_at(self, line: str, level: int, hooks=()):
         """Run a line of `level`. A line belongs to the last line one level up, and runs
         only if that line ran and left self["answer"] True. Before it runs, self["answer"]
         is the answer of the last line on its own level, so a def like `otherwise ?`
@@ -248,7 +251,7 @@ class Execute:
             self._answer = answers[level]
         elif level:
             self._answer = answers[level - 1]
-        result, statement = self._line(line, level)
+        result, statement = self._line(line, level, hooks)
         if not statement:
             del answers[level:]
             answers.append(self._answer)
@@ -265,47 +268,52 @@ class Execute:
             return
         self.compiled_lines.append((kind, self._raw_line or line, file, self._line_number))
 
-    def _line(self, line: str, level: int):
+    def _line(self, line: str, level: int, hooks=()):
         """A line without its indentation: (its value, whether it was a statement).
-        Told apart from its start, in this order: a statement, an entry, a modifier, a
-        definition; anything else is an expression."""
+        Told apart from its start, in this order: a modifier prefix, a statement, an
+        entry, a definition; anything else is an expression. A prefix makes its hooks
+        active for this line only: declaring an entry never installs behavior by itself."""
         pending, self._current_def = self._current_def, None
         self._end_entry()
-        if m := _USE.fullmatch(line):
-            self._use(m.group(1).strip())
+        modifiers, rest = self._modifiers(line)
+        if modifiers:
+            return self._modified(modifiers, rest, level, pending)
+        if m := _USE.fullmatch(rest):
+            self._use(m.group(1).strip(), hooks)
             self._compiled_line(line, "define")
-        elif (value := self._statement(line, level)) is not _NOT_A_STATEMENT:
+        elif (value := self._statement(rest, level, hooks)) is not _NOT_A_STATEMENT:
             # a statement whose `does` gives a value (`` `line` ``) is like an expression;
             # so is one with lines under it, in its scope: they run if it left the answer True
             scoped = bool(self._scope_levels) and self._scope_levels[-1][0] == level
-            self._compiled_line(line, "run")
+            # a `reading` statement already ran while the build was made; it isn't runtime
+            self._compiled_line(line, "define" if self.compiling and self._reading_statement else "run")
             return value, value is None and not scoped
-        elif m := _ENTRY.fullmatch(line):
+        elif m := _ENTRY.fullmatch(rest):
             self._declare(m.group(1), (m.group(2) or "").strip())
             self._compiled_line(line, "define")
-        elif (modifiers := self._modifiers(line))[0]:
-            result = self._modified(modifiers[0], modifiers[1], level, pending)
-            self._compiled_line(line, "define")
-            return result
-        elif (m := _DEFINITION.fullmatch(line)) and m.group(1) in self.kernel["language"]:
-            self._define(m.group(1), m.group(2), m.group(3), pending)
+        elif (m := _DEFINITION.fullmatch(rest)) and m.group(1) in self.kernel["language"]:
+            self._define(m.group(1), m.group(2), m.group(3), pending, hooks)
             self._compiled_line(line, "define")
         elif self.reloading and not self._acting:
             return None, True  # an expression: it doesn't run again
         elif self.checking and not self._acting:
             # read, never run; but an entry's `does` runs: it decides how lines are read
             from deflang.check import check_line
-            check_line(self, line)
+            check_line(self, rest)
             return None, False
         elif self.compiling and not self._acting:
             # read the expression now, so a build fails on a line it cannot parse; it is
             # evaluated later, when the artifact runs its recorded lines
-            self._parser.parse(line)
+            self._parser.parse(rest)
             self._answer = True  # the lines under it are read too
             self._compiled_line(line, "run")
             return None, False
         else:
-            return self._parser.parse(line).evaluate(self), False
+            node = self._parser.parse(rest)
+            if self._has_hooks("line", None, hooks) and not self._in_hook:
+                with self.cycle("line", text=rest, level=level, kind="expression", hooks=hooks):
+                    return node.evaluate(self), False
+            return node.evaluate(self), False
         return None, True
 
     # ------------------------------------------------------------ the kernel's entries
@@ -331,18 +339,36 @@ class Execute:
     def _end_entry(self):
         """The entry being read ends: one that replaces another file's must have said so."""
         entry, self._current_entry = self._current_entry, None
-        if entry is not None and entry.kind == "statement" and entry.does is not None:
-            # a statement's hooks act around its `does`, whenever it runs. Hooks may be
-            # declared before or after `does`, so add only the ones not there yet.
-            for hook in entry.hooks:
-                if not any(old is hook for old in entry.does.hooks):
-                    entry.does.hooks.append(hook)
         if entry is not None and entry.replaced is not None and "replaces" not in entry.fields:
             old = entry.replaced
             error = DefException(f"{entry.kind} {entry.name} is there already (declared in {old.file.name if old.file else 'the program'}): "
                                  f"to replace it, write `replaces {self._use_name(old.file)}` under `{entry.kind} {entry.name}`")
             error.line = entry.line
             raise error
+        if entry is None:
+            return
+        # A statement's own hooks act on its `does`, whenever that statement runs.
+        # They are declared right there; nothing is installed for other lines.
+        if entry.kind == "statement" and entry.does is not None:
+            for hook in self._definition_hooks(entry):
+                if not any(old is hook for old in entry.does.hooks):
+                    entry.does.hooks.append(hook)
+
+    @staticmethod
+    def _definition_hooks(entry) -> list:
+        """Hooks that live on a definition: they run when that definition runs."""
+        return [hook for hook in entry.hooks if hook.cycle in kernels.DEFINITION_CYCLES]
+
+    @staticmethod
+    def _hooks_from(modifiers) -> list:
+        """The hooks a modifier prefix makes active on exactly this line."""
+        return [hook for entry in modifiers for hook in entry.hooks]
+
+    def _owner_of(self, entry) -> str:
+        """The engine-supplied identity of a declaration: FILE/NAME (or NAME if typed in)."""
+        if entry.file is None:
+            return entry.name
+        return f"{self._use_name(entry.file)}/{entry.name}"
 
     def _use_name(self, path: Optional[Path]) -> str:
         """How `use` names a file: `language/css`, `core`, `def/helpers`."""
@@ -407,8 +433,7 @@ class Execute:
             body.flags = self._flags(m.group(4), language)
             for name, words in body.flags.items():
                 self._act(self.kernel["flag"][name], {"definition": body}, words)
-            owner = f"{self._use_name(entry.file)}/{entry.name}" if entry.file is not None else entry.name
-            entry.hooks.append(Hook(cycle, phase, body, owner))
+            entry.hooks.append(Hook(cycle, phase, body, self._owner_of(entry)))
             entry.reading_definition = body
             entry.reading_does = True
         elif found == "words":
@@ -446,13 +471,15 @@ class Execute:
         finally:
             self._entries.pop()
 
-    def _statement(self, line: str, level: int = 0):
+    def _statement(self, line: str, level: int = 0, hooks=()):
         """A statement a library declared (`statement NAME` with `words`): run it, and give
         what its `does` returns; _NOT_A_STATEMENT when no statement's words match. The
         files its `does` puts in self["entry"]["scope"] are the scope of the rest of its
         `does` and of the lines under it."""
+        self._reading_statement = False
         for entry in self.kernel["statement"].values():
             if entry.words is not None and (found := entry.words.matches(line)):
+                self._reading_statement = entry.reading
                 if self.compiling and not self._acting and not entry.reading:
                     # a runtime statement: recorded by _line, replayed when the build runs
                     self._answer = True  # its lines under it are read too
@@ -460,8 +487,27 @@ class Execute:
                 acts_on = {"scope": []}
                 scope = (level, acts_on["scope"])
                 self._scope_levels = self._scope_levels + [scope]
-                try:
+
+                def act():
                     return self._do(entry, acts_on, found[0].arguments)
+
+                try:
+                    if self.compiling or self.checking or self._in_hook:
+                        return act()  # reading, or a hook body: no cycles to run
+                    line_on = self._has_hooks("line", None, hooks)
+                    scope_on = self._has_hooks("scope", None, hooks)
+                    if line_on:
+                        with self.cycle("line", text=line, level=level, kind="statement", hooks=hooks):
+                            if scope_on:
+                                with self.cycle("scope", text=line, scope=acts_on["scope"],
+                                                variables=self._variables, hooks=hooks):
+                                    return act()
+                            return act()
+                    if scope_on:
+                        with self.cycle("scope", text=line, scope=acts_on["scope"],
+                                        variables=self._variables, hooks=hooks):
+                            return act()
+                    return act()
                 finally:
                     if not acts_on["scope"]:
                         self._scope_levels = [s for s in self._scope_levels if s is not scope]
@@ -476,21 +522,24 @@ class Execute:
         return modifiers, rest
 
     def _modified(self, modifiers: list, rest: str, level: int, pending):
-        """`internal def ...` (modifiers in front of a definition) or `shared visits is 0`
-        (in front of a name): each modifier's `does` acts on the definition, or the name;
-        a name's line then runs as usual."""
+        """A modifier in front of a line makes its hooks active for that line only. Its
+        `does` still acts on what follows (a definition, a name, or the line itself);
+        then the line runs as usual."""
+        hooks = self._hooks_from(modifiers)
         if (m := _DEFINITION.fullmatch(rest)) and m.group(1) in self.kernel["language"]:
-            definition = self._define(m.group(1), m.group(2), m.group(3), pending)
+            definition = self._define(m.group(1), m.group(2), m.group(3), pending, hooks)
             for entry in modifiers:
                 self._act(entry, {"definition": definition})
-                definition.hooks.extend(entry.hooks)
+                definition.hooks.extend(self._definition_hooks(entry))
             self._language.changed()  # a modifier may change how the def reads
+            self._compiled_line(self._raw_line or rest, "define")
             return None, True
         name = re.match(r"[\w-]+", rest).group(0)
         for entry in modifiers:
-            self._do(entry, {"name": name})
+            self._act(entry, {"name": name, "line": rest, "text": rest})
         if rest.strip() != name and not self.reloading:
-            return self._line(rest, level)  # the rest is an ordinary line
+            return self._line(rest, level, hooks)  # the rest is an ordinary line
+        self._compiled_line(self._raw_line or rest, "define")
         return None, True
 
     def _flags(self, text: Optional[str], where: str) -> dict:
@@ -519,11 +568,28 @@ class Execute:
                 raise DefException(f"unknown flag '{item}' (the flags are: {', '.join(sorted(self.kernel['flag']))})")
         return flags
 
-    def _define(self, language: str, flag_text: Optional[str], pattern: str, pending: Optional[Definition]) -> Definition:
-        """`def say A0`, `python[written] repeat A0 times : A1`: a definition, whose body
-        is the indented lines below it. Several definition lines in a row share one body."""
+    def _define(self, language: str, flag_text: Optional[str], pattern: str, pending: Optional[Definition],
+                hooks=()) -> Definition:
+        """`def say A0`, `python[written] repeat A0 times : A1`: a definition, made
+        inside the `define` cycle, whose body is the indented lines below it."""
+        file = self._import_files[-1] if self._import_files else None
         flags = self._flags(flag_text, language)
+        define_hooks = list(hooks)
+        for name in flags:
+            define_hooks.extend(hook for hook in self.kernel["flag"][name].hooks if hook.cycle == "define")
+        language_entry = self.kernel["language"].get(language)
+        if language_entry is not None:
+            define_hooks.extend(hook for hook in language_entry.hooks if hook.cycle == "define")
+        with self.cycle("define", text=pattern, pattern=pattern.strip(), language=language,
+                        flags=flags, file=file, hooks=define_hooks) as current:
+            flags = current["flags"] if current is not None else flags
+            definition = self._define_with_flags(language, flags, pattern, pending, flag_text)
+            if current is not None:
+                current["definition"] = definition
+        return definition
 
+    def _define_with_flags(self, language: str, flags: dict, pattern: str, pending: Optional[Definition],
+                           flag_text: Optional[str]) -> Definition:
         if pending is not None and not pending.body:
             # another way to write the definition above: they share one body
             if pending.language != language or pending.flags != flags:
@@ -545,27 +611,28 @@ class Execute:
         for name, words in flags.items():
             entry = self.kernel["flag"][name]
             self._act(entry, {"definition": definition}, words)
-            definition.hooks.extend(entry.hooks)
+            definition.hooks.extend(self._definition_hooks(entry))
         # a language's hooks act on every definition written in it; an entry's own
         # `does` is not one of them (or its hooks would hook their own reader)
         language_entry = self.kernel["language"].get(language)
         if language_entry is not None:
-            definition.hooks.extend(language_entry.hooks)
+            definition.hooks.extend(self._definition_hooks(language_entry))
         definition.add_patterns(pattern.strip(), self._argument_name)
         self.definitions.append(definition)
         self._current_def = definition
         return definition
 
-    def _use(self, text: str):
+    def _use(self, text: str, hooks=()):
         """`use FILE` runs a file once. `use NAMES from FILE` also gives this file the shared
-        variables NAMES of FILE: `use visits from counter`, `use visits as count from counter`."""
+        variables NAMES of FILE: `use visits from counter`, `use visits as count from counter`.
+        A modifier prefix supplies the `file` hooks for this import."""
         if (m := _USE_FROM.fullmatch(text)) is None:
             if " as " in text:
                 raise DefException(f"`as` is only for names: use NAME as OTHER from {text.split(' as ')[0].strip()}")
-            self._import(text)
+            self._import(text, hooks)
             return
         names, file = m.group(1), m.group(2)
-        path = self._import(file)
+        path = self._import(file, hooks)
         theirs = self._place(path)["names"]
         for part in names.split(","):
             name, _, other = part.strip().partition(" as ")
@@ -574,7 +641,7 @@ class Execute:
                 raise DefException(f"{file} has no shared variable '{name}': it would say `shared {name}`")
             self._place(self._variables.file)["names"][other] = (path, name)
 
-    def _import(self, name: str) -> Path:
+    def _import(self, name: str, hooks=()) -> Path:
         path = self._resolve(name)
         if path in self._imported:
             return path
@@ -582,7 +649,8 @@ class Execute:
 
         try:
             text = self.texts[path] if path in self.texts else path.read_text()
-            self._read(path, text.splitlines())
+            with self.cycle("file", text=name, file=path, place=self._place(path), hooks=hooks):
+                self._read(path, text.splitlines())
         except BaseException:
             self._imported.discard(path)
             raise
@@ -672,7 +740,8 @@ class Execute:
         self._set_definitions([d for d in before if d.file != path])
         self.reloading = True
         try:
-            self._read(path, lines)
+            with self.cycle("file", text=f"again: {path}", file=path, place=self._place(path)):
+                self._read(path, lines)
         except BaseException:
             self._set_definitions(before)
             raise
@@ -758,15 +827,32 @@ class Execute:
 
     def call(self, definition: Definition, arguments: list, text: str):
         """Run a definition, with the `call` cycle's hooks around it."""
-        if self._in_hook:
-            return self._call(definition, arguments, text)  # a hook body doesn't hook itself
+        if self._in_hook or not self._has_hooks("call", definition):
+            return self._call(definition, arguments, text)  # no listener, or a hook body
         with self.cycle("call", text=text, definition=definition, arguments=arguments):
             return self._call(definition, arguments, text)
 
+    @staticmethod
+    def _has_local_hook(name: str, definition) -> bool:
+        """Whether this definition carries a hook for `name`."""
+        return definition is not None and any(hook.cycle == name for hook in getattr(definition, "hooks", ()))
+
+    def _has_hooks(self, name: str, definition=None, hooks=()) -> bool:
+        """Whether anything is listening: the hot paths pay for a cycle only then.
+        `hooks` are the ones a modifier put on this exact line."""
+        return (any(hook.cycle == name for hook in hooks)
+                or self._has_local_hook(name, definition))
+
     @contextlib.contextmanager
-    def cycle(self, name: str, **values):
+    def cycle(self, name: str, hooks=(), **values):
         """One lifecycle cycle: `start` hooks, the operation, then `end` or `error`.
-        `self["cycle"]` is the cycle running now; its `state` is hook scratch space."""
+        `self["cycle"]` is the cycle running now; its `state` is hook scratch space.
+        Hooks are supplied by the line or definition that asked for this cycle, never
+        installed by declaring an entry. With no listener (or inside a hook), it is a
+        plain `yield`."""
+        if self._in_hook or not self._has_hooks(name, values.get("definition"), hooks):
+            yield None
+            return
         self._cycle_id += 1
         cycle = {"id": self._cycle_id, "name": name, "phase": "start", "text": None,
                  "definition": None, "file": self["file"], "owner": None,
@@ -777,25 +863,24 @@ class Execute:
         cycle.update(values)
         self._cycles.append(cycle)
         try:
-            self._run_hooks(name, "start", cycle)
+            self._run_hooks(name, "start", cycle, hooks)
             cycle["phase"] = "body"
             try:
                 yield cycle
             except BaseException as error:
                 cycle["error"] = error
                 cycle["phase"] = "error"
-                self._run_hooks(name, "error", cycle)
+                self._run_hooks(name, "error", cycle, hooks)
                 raise
             cycle["phase"] = "end"
-            self._run_hooks(name, "end", cycle)
+            self._run_hooks(name, "end", cycle, hooks)
         finally:
             self._cycles.pop()
 
-    def _run_hooks(self, name: str, phase: str, cycle: dict):
-        """Run the hooks of this cycle and phase, for this definition. End and error
-        hooks run in reverse order, so they unwind what the start hooks set up."""
-        hooks = list(self.kernel["hooks"][name][phase])
-        hooks += list(getattr(cycle["definition"], "hooks", None) or ())
+    def _run_hooks(self, name: str, phase: str, cycle: dict, hooks=()):
+        """Run the hooks of this cycle and phase. The ones on this line come first;
+        the ones on a definition follow. End and error hooks run in reverse order."""
+        hooks = list(hooks) + list(getattr(cycle["definition"], "hooks", None) or ())
         if phase != "start":
             hooks.reverse()
         selected = [hook for hook in hooks if hook.cycle == name and hook.phase == phase]
@@ -826,19 +911,11 @@ class Execute:
         self._answers, self._call_indent = [], DEFAULT_INDENT
         self._scope_base, self._scope_levels = self._scopes_now(), []
         try:
-            if definition.language == "python":
-                return definition.function()(self, arguments)
-            entry = self.kernel["language"].get(definition.language)
-            if entry is None or entry.does is None or not entry.does.body:
-                raise DefException(f"language {definition.language} has no `does`: write the Python that runs it under `does`, one level in")
-            fill = lambda body, values: SLOT_REGEX.sub(lambda m: str(values[int(m.group(1))]), body)
-            template = "\n".join(definition.lines())
-            acts_on = {"definition": definition, "template": template, "values": arguments, "fill": fill,
-                       "body": fill(template, [as_text(value) for value in arguments]),
-                       "as written": not definition.reads_values, "in place": definition.in_place,
-                       "argument": self._place(definition.file)["argument"]}
-            result = self._do(entry, acts_on)
-            return acts_on["body"] if result is None else result
+            if self._has_hooks("body", definition) and not self._in_hook:
+                with self.cycle("body", text=text, definition=definition, file=definition.file,
+                                variables=self._variables, body="\n".join(definition.lines())):
+                    return self._body(definition, arguments, text)
+            return self._body(definition, arguments, text)
         except DefException:
             raise
         except RecursionError:
@@ -847,6 +924,22 @@ class Execute:
             raise DefException(f"in '{self._display_text(text)}': {type(error).__name__}: {error}")
         finally:
             self._answers, self._call_indent, self._scope_base, self._scope_levels = outer
+
+    def _body(self, definition: Definition, arguments: list, text: str):
+        """The body itself: Python runs here; another language's body is run by its `does`."""
+        if definition.language == "python":
+            return definition.function()(self, arguments)
+        entry = self.kernel["language"].get(definition.language)
+        if entry is None or entry.does is None or not entry.does.body:
+            raise DefException(f"language {definition.language} has no `does`: write the Python that runs it under `does`, one level in")
+        fill = lambda body, values: SLOT_REGEX.sub(lambda m: str(values[int(m.group(1))]), body)
+        template = "\n".join(definition.lines())
+        acts_on = {"definition": definition, "template": template, "values": arguments, "fill": fill,
+                   "body": fill(template, [as_text(value) for value in arguments]),
+                   "as written": not definition.reads_values, "in place": definition.in_place,
+                   "argument": self._place(definition.file)["argument"]}
+        result = self._do(entry, acts_on)
+        return acts_on["body"] if result is None else result
 
     def run_lines(self, text: str, definition: Optional[Definition] = None):
         """Run lines the way a file's lines run: each on its level, comments skipped, a line
@@ -869,9 +962,10 @@ class Execute:
         self._call_indent = definition.indent if definition is not None else DEFAULT_INDENT
         self._call_comment = definition.comment if definition is not None else DEFAULT_COMMENT
         result = None
+        hooks = getattr(definition, "hooks", ()) if definition is not None else ()
         try:
             for line in str(text).split("\n"):
-                value = self.run(line)
+                value = self.run(line, hooks)
                 if value is not None:
                     result = value
         finally:
@@ -904,20 +998,35 @@ class Execute:
             self._display.pop()
 
     @contextlib.contextmanager
-    def own_variables(self, file=_SAME):
+    def own_variables(self, file=_SAME, hooks=()):
         """Lines run inside get variables of their own, on top of `file`'s (by default
         the file of the lines running now): what they set is gone afterwards, except the
         shared variables that file uses. A def call has this with the file the def was
         made in; the web server gives one to each request. They are in no scope: they
-        are that file's lines, not the caller's."""
+        are that file's lines, not the caller's. `hooks` are the def's scope hooks, given
+        by the line that created that def."""
         outer = self._variables, self._answers, self._scope_base, self._scope_levels
         file = self._variables.file if file is _SAME else file
-        self._variables, self._answers = Variables(file, self._place(file), self.kernel["shared"], own={}), []
-        self._scope_base, self._scope_levels = (), []
-        try:
-            yield self._variables
-        finally:
-            self._variables, self._answers, self._scope_base, self._scope_levels = outer
+        variables = Variables(file, self._place(file), self.kernel["shared"], own={})
+        if not hooks and self._entries:
+            # a language's `does` calls this with just a file; the def it runs is in
+            # self["entry"], and its scope hooks go with it (see _body/_do)
+            hooks = getattr(self._entries[-1].get("definition"), "hooks", ()) or ()
+        if self._has_hooks("scope", None, hooks) and not self._in_hook:
+            with self.cycle("scope", file=file, text=None, variables=variables, hooks=hooks):
+                self._variables, self._answers = variables, []
+                self._scope_base, self._scope_levels = (), []
+                try:
+                    yield self._variables
+                finally:
+                    self._variables, self._answers, self._scope_base, self._scope_levels = outer
+        else:
+            self._variables, self._answers = variables, []
+            self._scope_base, self._scope_levels = (), []
+            try:
+                yield self._variables
+            finally:
+                self._variables, self._answers, self._scope_base, self._scope_levels = outer
 
     def say(self, value):
         """Print a value: through `output` when the REPL gave one, otherwise print()."""

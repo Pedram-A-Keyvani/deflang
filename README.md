@@ -553,7 +553,7 @@ say 4 doubled
 - `self.run_lines(text, definition)` runs lines the way a file's lines run, with the
   indent and comment marker the definition was written with: each line on its level,
   comments skipped. It gives the value of the last line that has one.
-- `self.own_variables(file)` gives the lines variables of their own, on top of the
+- `self.own_variables(file, hooks=())` gives the lines variables of their own, on top of the
   file's ([chapter 6](#6-variables)). A definition that keeps its arguments' words,
   or an entry's `does` (`"in place"`), runs where it acts, with the variables there.
 - Every language takes every flag: `def[written] …`, `css[written] …`.
@@ -1158,7 +1158,7 @@ changed as `self[...]`; what it does are its methods.
 | `self.run(text)` | runs a line of def-lang and gives its value |
 | `self.run_lines(text, definition)` | runs lines the way a file's lines run, with the indent and comment marker `definition` was written with (or 4 and `//`): each line on its level, comments skipped; gives the value of the last line that has one. Without `definition`, they are the program's lines |
 | `self.say(value)` | prints a value |
-| `self.own_variables(file)` | in a `with` block, lines get variables of their own, on top of `file`'s (a def-lang call, a web request) |
+| `self.own_variables(file, hooks=())` | in a `with` block, lines get variables of their own, on top of `file`'s (a def-lang call, a web request); `hooks` are a definition's scope hooks, usually supplied by the engine |
 | `self.changed_files()`, `self.reload(path)` | the files saved since they were read; reads one again, in place of its old definitions |
 | `self.scope_of(name)` | for a statement's `self["entry"]["scope"]`: the file `use NAME` names, used if it isn't yet; for a library's name, its folder (its `main.def` used, if it has one) |
 

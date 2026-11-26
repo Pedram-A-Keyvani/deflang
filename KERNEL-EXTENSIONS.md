@@ -2,10 +2,11 @@
 
 ## Status and decisions
 
-Draft design, 2026-11-26. The `call` cycle is implemented; the other cycles are still
-design. Hook bodies are entries' `hook CYCLE PHASE in LANGUAGE` fields. `self["cycle"]`
-and the global `self["hooks"]` registry are in the kernel, and hook bodies are
-`Definition` objects, so they travel in compiled builds.
+Design and implementation, 2026-11-26. All six cycles are implemented. Hook bodies
+are entries' `hook CYCLE PHASE in LANGUAGE` fields. `self["cycle"]` is in the kernel,
+and hook bodies are `Definition` objects, so they travel in compiled builds. Declaring
+an entry never installs behavior by itself: its hooks become active only when the entry
+is written in front of the line they act on, or on a definition that uses the entry.
 
 Decisions already made:
 
@@ -17,7 +18,7 @@ Decisions already made:
 - The first hook cycles are: definition call, file/import read, line classification,
   and variable/scope lifetime.
 - `self["cycle"]["file"]` and `self["cycle"]["owner"]` are different fields and both
-  stay: `file` is what the cycle is about; `owner` is which declaration installed the
+  stay: `file` is what the cycle is about; `owner` is which declaration supplied the
   running hook. `self["entry"]` cannot substitute for `owner`.
 - No private engine fields are exposed as new API in this design. `say` stays as
   `python say A0 / self.say(A0)`.
@@ -180,12 +181,13 @@ definitions use public methods. Nothing in the `say` path needs private access.
 
 ### Data keys
 
-Add two new public keys:
+Add one new public key:
 
 - `self["cycle"]`: read-only state for the cycle currently running.
-- `self["hooks"]`: the hook registry.
 
-Keep existing keys. Document for each key:
+There is deliberately no global hook registry. A hook lives on the entry that declared
+it, or on the definition it was applied to, so activation is visible at the line that
+causes it. Keep existing keys. Document for each key:
 
 - when it exists,
 - who may write it,
@@ -227,7 +229,7 @@ values from `start` to `end` without writing globals.
 - `file` answers *which source file this cycle is about*: the file being imported, or
   the file where the called definition was made. It is used by errors, scopes, and
   compiled replay.
-- `owner` answers *which declaration installed the hook now running*. It is derived
+- `owner` answers *which declaration supplied the hook now running*. It is derived
   from the entry's file and name, for example `local_time/timed`, and is supplied by
   the engine rather than written by the library author.
 
@@ -235,48 +237,44 @@ values from `start` to `end` without writing globals.
 running. A modifier's `call` hook runs around the *target definition's* body, so
 `self["entry"]` points at that context, not at the modifier.
 
-### Hook registry
+### Where hooks live
 
-`self["hooks"]` is a registry of hooks:
+There is no global registry. A `Hook` record has a `cycle`, a `phase`, its `definition`
+(the Python/def body to run) and the engine-supplied `owner`. Hooks live in two places:
 
-```python
-kernel["hooks"] = {
-    "global": {
-        "call": {"start": [], "end": [], "error": []},
-        "file": {"start": [], "end": [], "error": []},
-        # ...
-    },
-    "definitions": [],  # hooks attached to particular definitions
-}
-```
+- `entry.hooks`: what the entry declared. Declaring it changes nothing else.
+- `Definition.hooks`: what was applied to a definition. These hooks are versioned with
+  the language snapshot and the compiled artifact.
 
-A hook record has:
-
-- `cycle`: `file`, `line`, `define`, `call`, `body`, or `scope`
-- `phase`: `start`, `end`, or `error`
-- `definition`: the Python/def body to run
-- `owner`: the entry or definition that installed it
-- `order`: install order
-- `enabled`: bool
-
-Definition-local hooks belong to `Definition.hooks`, so they are versioned with the
-language snapshot and the compiled artifact.
+Order is the order in which the hooks were applied. There is no `enabled` flag: a hook
+is simply not applied, or it is replaced with the entry.
 
 ### Entry hooks
 
-Every entry kind can declare hooks with a new repeatable field:
+Every entry kind can declare hooks with a repeatable field:
 
 ```def
 hook CYCLE PHASE in LANGUAGE
     ...body...
 ```
 
-Only the word `hook` is new. `CYCLE` and `PHASE` are fixed strings from the registry;
-`in LANGUAGE` keeps the existing `does in LANGUAGE` shape.
+Only the word `hook` is new. `CYCLE` and `PHASE` are fixed strings; `in LANGUAGE` keeps
+the existing `does in LANGUAGE` shape.
 
-A modifier's hooks attach to the definition it modifies. A flag's hooks attach
-similarly. A statement's hooks are active while its line runs. A language's hooks
-attach to definitions written in that language.
+A modifier only acts when it is written in front of a line:
+
+```def
+watched use part          # `file` hooks wrap this import
+watched say 21            # `line` hooks wrap this line
+watched def double A0     # `define` hook wraps its creation; the rest live on the def
+    A0 * 2
+```
+
+For a definition line, the `define` hooks run around its creation; `call`, `body`,
+`line` and `scope` hooks are stored on the new `Definition` and run when it runs (its
+body's lines and its `own_variables` included). Flags and languages work the same way:
+writing `[marked]` or `python` on a definition applies that entry's hooks to it.
+A statement's own hooks act on its `does`, which it declares right next to them.
 
 ### IntelliSense for cycle state
 
@@ -359,91 +357,88 @@ The context manager:
 
 ### Where the cycles appear
 
-Several lines trigger two cycles: first classification, then the operation the line
-starts.
+A cycle starts only when something is listening. With no hooks it is a plain `yield`,
+so the hot paths pay almost nothing for cycles they do not use.
 
 ```def
-use file/io                    ← line classification, then FILE/IMPORT read
-use flag/written               ← line classification, then FILE/IMPORT read
+watched use file/io            ← FILE/IMPORT read, because of the prefix
 
-// a note                      ← line classification (comment)
+python double A0               ← no cycle: no hook was applied to this line
+    A0 * 2
 
-python double A0               ← line classification, then DEFINITION CREATION
-    A0 * 2                     ← line classification (body line)
+timed def triple A0            ← DEFINITION CREATION from timed's define hook;
+                                  its other hooks go on this definition
+    double 21                  ← LINE, then DEFINITION CALL, then BODY
 
-modifier traced                ← line classification (entry declaration)
-    does in python             ← line classification (entry field)
-        ...                    ← line classification (hook body, read at setup)
+set x to 21                    ← no line cycle unless the line is prefixed
 
-statement shout                ← line classification (entry declaration)
-    words shout A0             ← line classification; runs while reading
-    does in def
-        say A0
-
-traced def triple A0           ← line classification, then DEFINITION CREATION
-    double 21                  ← DEFINITION CALL (nested inside triple's body)
-    A0 + A0 + A0
-
-set x to 21                    ← line classification (statement/expression)
-
-say triple x                   ← line classification, then DEFINITION CALL
-
-set scope to file/io           ← line classification, then VARIABLE/SCOPE
-    triple x                   ← call cycle again, inside that file's variables
-
-in the scope of file/io        ← line classification, then VARIABLE/SCOPE
-    say triple x
+traced say triple x            ← LINE, then CALL, BODY and the def's SCOPE
 ```
 
-A `call` hook fires at `double 21` and `say triple x`, not at the definition lines. A
-`define` hook fires at `python double A0` and `traced def triple A0`. A `line` hook
-fires at every line, including the hooks' own bodies — which is why the re-entrancy
-guard matters.
+A `call` hook fires for definitions the modifier was written on, not for every
+definition. A `define` hook fires only for the definition line it prefixes. A `line`
+hook fires on the prefixed line and on lines inside a definition it was applied to;
+declarations and comments are not line cycles. A hook's own lines never start another
+cycle, which is why the re-entrancy guard matters.
 
 ### File/import cycle
 
-Wraps `_import` / `_read`.
+Wraps the actual read of a used file (`_import` / `_read`, also `reload`).
 
-State: `file`, `text`, `place`.
+State: `file` (the path), `text` (the name written at `use`), `place` (its place in
+`self["files"]`).
 
 Uses: module setup, teardown, per-file data, tracing which library introduced a word.
+A compiled build has already read its files, so this cycle fires when the file is read,
+not again when recorded lines are replayed.
 
 ### Line/read cycle
 
-Wraps `_run_at` / `_line`.
+Wraps a statement's `does` and an expression's evaluation, as each runs. Statements
+that only build the language while `check` or `compile` reads do not start it.
 
-State: `text`, `level`, `file`, `kind` (`statement`, `entry`, `definition`, `modifier`,
-`expression`, `comment`, `empty`).
+State: `text`, `level`, `file`, `kind` (`statement` or `expression`).
 
-Uses: tracing, alternate readers, read-time validation. Hooks must not re-trigger
-themselves; see Behaviour rules.
+Uses: tracing and alternate behavior for lines that run. A def body's lines run through
+the same path, so they are line cycles too. Hooks must not re-trigger themselves; see
+Behaviour rules.
 
 ### Definition creation cycle
 
 Wraps `_define`.
 
-State: `pattern`, `language`, `flags`, `file`.
+State: `pattern`, `language`, `flags`, `file`, and `definition` from its `end` phase on.
 
-Uses: modifiers that rewrite patterns, register metadata, or attach hooks to the new
-definition.
+Uses: modifiers that register metadata or attach hooks to the new definition. A build
+runs these hooks while reading, so what they change is already in the artifact.
 
 ### Definition call cycle
 
-Wraps `call`.
+Wraps `call`, around `_call`.
 
 State: `definition`, `arguments`, `text`.
 
 Uses: logging, timing, caching, memoization, argument validation, wrapping return
-values. This is the first cycle to implement because it has the clearest boundary.
+values.
+
+### Body cycle
+
+Wraps the body run inside a definition call, for Python and for other languages.
+
+State: `definition`, `text`, `body`, `file`, `variables`.
+
+Uses: tracing and wrapping a body without wrapping the whole call. Its hooks attach to
+the definition, like `call` hooks.
 
 ### Variable/scope cycle
 
-Wraps `run_lines` and `own_variables`.
+Wraps a statement's scope and `own_variables` (the variables a def-lang body gets).
 
-State: `definition`, `text`, `file`, `variables`.
+State: `text`, `file`, `variables`, and `scope` for a statement's list of files.
 
 Uses: request-local state, transaction-like setup, temporary bindings, scope-aware
-debugging.
+debugging. Its hooks come from a modifier on the statement line, or from a definition
+whose body gets `own_variables`.
 
 ### Error and cleanup phases
 
@@ -583,18 +578,21 @@ the innermost active cycle, or `None`.
 
 ### Ordering
 
-- `start` hooks run in install order, global hooks before definition-local hooks.
-- `end` and `error` hooks run in reverse install order.
+- `start` hooks run in the order they were applied: line hooks first, then the
+  definition's own hooks.
+- `end` and `error` hooks run in reverse apply order.
 - Nested cycles run their own hooks; a nested `call` does not replace the outer
   `file` cycle state, it nests inside it.
 - The same hook can run more than once if its definition is called more than once.
+- With no applied hook, a cycle is skipped: hot paths check only the hooks passed for
+  that line and the definition's own hooks before paying for the context manager.
 
 ### Nesting
 
 Hooks are body lines too. While running hooks, the engine sets an internal
-`_in_hook` counter, so a hook that runs def-lang lines or calls another def does not
-invoke call hooks again. That prevents a hook from recursing into itself. A def called
-by a hook is otherwise run normally; it just has no hooks of its own during that call.
+`_in_hook` counter, so a hook that runs def-lang lines or calls another def starts no
+new cycle. That prevents a hook from recursing into itself. A def called by a hook is
+otherwise run normally; it just has no hooks of its own during that call.
 
 ### Failure
 
@@ -606,9 +604,13 @@ by a hook is otherwise run normally; it just has no hooks of its own during that
 ### Snapshots and compiled builds
 
 Hooks are `Definition` objects, so they are already covered by the language snapshot
-work. `Definition` gains a `hooks` tuple/list. Compiled artifacts pickle the hooks,
-restore their hook modes, and rebuild parsed/cached bodies lazily. No Python lambda or
-closure may be stored in an artifact.
+work. They are stored in `entry.hooks` and `Definition.hooks`, both of which travel in
+a compiled build. Loading a build restores every hook body's modes and rebuilds its
+Python function lazily. No Python lambda or closure is stored in an artifact. A runtime
+line is recorded with its modifier prefix, so the hooks applied at that line are applied
+again on replay. `call`, `body`, `line` and `scope` hooks run on replayed runtime lines;
+`file` and `define` hooks already ran while the build was made. Alias lines a library
+ran then are in the artifact's aliases, so they are no longer replayed as runtime lines.
 
 ## Migration plan
 
@@ -673,13 +675,15 @@ This proves that a modifier adds behavior rather than selecting an existing opti
 
 ## Verification
 
-1. Unit tests for hook order, nesting, error phase, and re-entrancy guard.
-2. Differential tests: interpreted vs compiled runs produce the same hook output.
-3. Corpus test: existing 2,257 lines remain unchanged unless syntax is intentionally
-   added.
-4. A sample-library test using `traced` and one data-key modifier.
-5. Benchmarks: hook dispatch must be cheap when no hooks are registered; call cycles
-   should not regress the compiled-run speedup.
+1. `tests/test_hooks.py` covers all six cycles, order, nesting, error phase, owner
+   namespacing, `replaces`, and the re-entrancy guard.
+2. Differential tests compare interpreted and compiled hook output for `call`, `body`
+   and `scope`; `file` and `define` hooks run when the build is made, so their timing
+   is deliberately different at replay.
+3. `tests/parse_corpus.py`: the existing 2,257 lines still match the baseline.
+4. The full sample suite passes (226 tests).
+5. Benchmarks: with no hooks, cycles are skipped and the interpreter is faster than
+   the pre-hook baseline; the compiled-run speedup is unchanged.
 
 ## Open questions
 

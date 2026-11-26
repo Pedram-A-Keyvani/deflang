@@ -34,6 +34,10 @@ from deflang.definition import Definition
 KINDS = ("language", "flag", "modifier", "statement")
 CYCLES = ("file", "line", "define", "call", "body", "scope")
 PHASES = ("start", "end", "error")
+# hooks for these cycles live on a definition and run when it runs; `file` and
+# `define` belong to the line that reads or creates the thing, so they are passed
+# to that operation instead. Nothing is installed just by declaring an entry.
+DEFINITION_CYCLES = ("call", "body", "line", "scope")
 
 # what an entry acts on, given to its `does` as self["entry"] (see Execute._do):
 #   a language:  "definition" (the one that runs), "template" (its body, the places of its
@@ -91,8 +95,6 @@ def built_in() -> dict:
     from collections import defaultdict
     kernel = {kind: {} for kind in KINDS}
     kernel.update(aliases={}, files={}, shared={}, store=defaultdict(dict))
-    # hooks installed for every definition, besides the ones an entry attaches to a def
-    kernel["hooks"] = {cycle: {phase: [] for phase in PHASES} for cycle in CYCLES}
     kernel["language"]["python"] = Entry("language", "python", built_in=True)
     kernel["statement"]["use"] = Entry("statement", "use", built_in=True)
     return kernel
