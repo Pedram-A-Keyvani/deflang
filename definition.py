@@ -99,6 +99,18 @@ def read_readable(text: str, argument_name: str) -> List[str]:
     return [readable_to_regex(text, argument_name)]
 
 
+def read_regex(text: str, argument_name: str) -> List[str]:
+    """A raw regular expression, as the `regex` flag's `set pattern to regex` writes it.
+    Kept here as a function so a compiled definition can be restored from its mode."""
+    restricted = re.compile(r"\(" + re.escape(argument_name) + r"(\d+):\s*")
+    argument = re.compile(r"(?:(?<!\w)|(?<=\\\w))" + re.escape(argument_name) + r"(\d+)(?!\w)")
+    alternatives = []
+    for one in text.split(" or "):
+        one = restricted.sub(lambda m: "(?P<a" + m.group(1) + ">", one.strip())
+        alternatives.append(argument.sub(lambda m: "(?P<a" + m.group(1) + r">[\s\S]+)", one))
+    return alternatives
+
+
 def read_value(text: str, read: Callable):
     """The kernel's way to read an argument (a definition's `read_argument`, until an
     entry changes it): `read(text)` reads it as an expression, run for its value."""
@@ -111,6 +123,18 @@ def seen_everywhere(file) -> bool:
 
 
 _PROBE = object()
+
+
+def _read_written(text: str, read: Callable):
+    """A definition that keeps its arguments' words."""
+    return text
+
+
+def _read_kept(engine=None):
+    """A definition that keeps lines to run later, in the file of the calling line."""
+    if engine is None:
+        return lambda text, read: Line(text)
+    return lambda text, read: Line(text, engine["file"])
 
 
 @dataclass
@@ -148,6 +172,11 @@ class Definition:
     read_pattern: Callable = field(default=read_readable, repr=False)
     read_argument: Callable = field(default=read_value, repr=False)
     seen_by: Callable = field(default=seen_everywhere, repr=False)
+    # the modes the three hooks were set to, so a compiled definition restores them
+    # without pickling the library's local functions and lambdas
+    pattern_mode: str = "readable"
+    argument_mode: str = "values"
+    visibility: str = "everywhere"
     patterns: List[re.Pattern] = field(default_factory=list)
     body: List[str] = field(default_factory=list)
     _function: Optional[Callable] = field(default=None, repr=False)
@@ -174,6 +203,34 @@ class Definition:
         slot = (lambda m: f"a[{m.group(1)}]") if self.python else (lambda m: _SLOT.format(m.group(1)))
         self.body.append(argument_regex(argument_name).sub(slot, line))
         self._function = None
+
+    def restore_hooks(self, engine=None):
+        """Rebuild the three hooks from their modes. Library bodies set them with local
+        functions and lambdas, which a build cannot pickle; the modes can."""
+        flags = self.flags or {}
+        pattern = getattr(self, "pattern_mode", None) or ("regex" if "regex" in flags else "readable")
+        argument = getattr(self, "argument_mode", None) or ("written" if "written" in flags else
+                                                             "kept" if "later" in flags else "values")
+        visibility = getattr(self, "visibility", None) or "everywhere"
+        self.pattern_mode, self.argument_mode, self.visibility = pattern, argument, visibility
+        self.read_pattern = read_regex if pattern == "regex" else read_readable
+        self.read_argument = (_read_written if argument == "written" else
+                              _read_kept(engine) if argument == "kept" else read_value)
+        self.seen_by = (lambda file: file == self.file) if visibility == "file" else seen_everywhere
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        # compiled Python bodies and library-local functions are rebuilt, not pickled
+        state["_function"] = None
+        state["read_pattern"] = None
+        state["read_argument"] = None
+        state["seen_by"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._function = None
+        self.restore_hooks()
 
     def matches(self, text: str, pattern_indices: Optional[Iterable[int]] = None) -> List[Match]:
         """Run all patterns, or only the ones the language's word index picked."""

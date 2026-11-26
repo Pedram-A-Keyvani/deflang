@@ -68,6 +68,12 @@ class Execute:
         self._scope_levels: list = []
         # `def-lang check` (check.py): read without running; errors are collected here
         self.checking = False
+        # `def-lang compile` (build.py): build the language, recording the lines that
+        # still have to run at runtime ("run") and the ones already in the artifact
+        # ("define"). Library files only define; only the program's lines are recorded.
+        self.compiling = False
+        self.compiled_lines: List[tuple] = []
+        self._raw_line = ""  # the line as written, for a compiled build's replay
         self.problems: List[tuple] = []  # (file, line, message)
         self.texts: dict = {}            # file -> its text, instead of what is on disk
         self._imported = set()
@@ -193,7 +199,12 @@ class Execute:
         level = self._level(line)
         if level and self.reloading and not self._acting:
             return None  # a line that belongs to a question: it doesn't run again
-        return self._run_at(line.strip(), level)
+        outer = self._raw_line
+        self._raw_line = line
+        try:
+            return self._run_at(line.strip(), level)
+        finally:
+            self._raw_line = outer
 
     def _level(self, line: str) -> int:
         """How many levels a line is indented: `indent` spaces a level, a tab one level."""
@@ -235,6 +246,12 @@ class Execute:
             answers.append(self._answer)
         return result
 
+    def _compiled_line(self, line: str, kind: str):
+        """Remember a program line for a compiled build: "define" is already in the
+        artifact, "run" has to be replayed when it is loaded."""
+        if self.compiling and not self._import_files:
+            self.compiled_lines.append((kind, self._raw_line or line))
+
     def _line(self, line: str, level: int):
         """A line without its indentation: (its value, whether it was a statement).
         Told apart from its start, in this order: a statement, an entry, a modifier, a
@@ -243,23 +260,36 @@ class Execute:
         self._end_entry()
         if m := _USE.fullmatch(line):
             self._use(m.group(1).strip())
+            self._compiled_line(line, "define")
         elif (value := self._statement(line, level)) is not _NOT_A_STATEMENT:
             # a statement whose `does` gives a value (`` `line` ``) is like an expression;
             # so is one with lines under it, in its scope: they run if it left the answer True
             scoped = bool(self._scope_levels) and self._scope_levels[-1][0] == level
+            self._compiled_line(line, "run")
             return value, value is None and not scoped
         elif m := _ENTRY.fullmatch(line):
             self._declare(m.group(1), (m.group(2) or "").strip())
+            self._compiled_line(line, "define")
         elif (modifiers := self._modifiers(line))[0]:
-            return self._modified(modifiers[0], modifiers[1], level, pending)
+            result = self._modified(modifiers[0], modifiers[1], level, pending)
+            self._compiled_line(line, "define")
+            return result
         elif (m := _DEFINITION.fullmatch(line)) and m.group(1) in self.kernel["language"]:
             self._define(m.group(1), m.group(2), m.group(3), pending)
+            self._compiled_line(line, "define")
         elif self.reloading and not self._acting:
             return None, True  # an expression: it doesn't run again
         elif self.checking and not self._acting:
             # read, never run; but an entry's `does` runs: it decides how lines are read
             from deflang.check import check_line
             check_line(self, line)
+            return None, False
+        elif self.compiling and not self._acting:
+            # read the expression now, so a build fails on a line it cannot parse; it is
+            # evaluated later, when the artifact runs its recorded lines
+            self._parser.parse(line)
+            self._answer = True  # the lines under it are read too
+            self._compiled_line(line, "run")
             return None, False
         else:
             return self._parser.parse(line).evaluate(self), False

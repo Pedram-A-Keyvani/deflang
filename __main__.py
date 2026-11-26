@@ -1,7 +1,12 @@
 """The def-lang command:
 
     python -m deflang                          the console (type lines, then `on` to run them)
-    python -m deflang run FILE.def | FOLDER    run a program (a folder runs its main.def)
+    python -m deflang run FILE.def | FOLDER    run a program: a fresh build if there is
+                                                one, else the interpreter
+        --compiled                              require that build (compile first)
+        --interpreter                           read the sources instead
+        --debug                                 read the sources in debug mode
+    python -m deflang compile FILE | FOLDER [-o PATH]   build ahead of time (build/NAME.defbuild)
     python -m deflang check FILE.def | FOLDER  list its errors without running it
                                                (--json for editors; --text FILE: FILE's
                                                text is read from stdin, saved or not)
@@ -19,7 +24,7 @@ import re
 import sys
 from pathlib import Path
 
-from deflang import libraries
+from deflang import build, libraries
 from deflang.exception import DefException
 from deflang.execute import Execute
 
@@ -41,7 +46,12 @@ def program_file(name: str) -> Path:
     return path if path.suffix == ".def" else Path(f"{path}.def")
 
 
-def run(name: str, execute: Execute):
+def run(name: str, execute: Execute, artifact: Path = None):
+    """Run sources, or replay a build through the same Execute and parser."""
+    if artifact is not None:
+        lines = build.load(artifact, execute)
+        build.run_lines(execute, lines, output=lambda value: print(f"{GRAY}{value}{DEFAULT}"))
+        return
     file = program_file(name)
     if not file.is_file():
         raise DefException(f"no program {file}")
@@ -50,6 +60,48 @@ def run(name: str, execute: Execute):
         result = execute.run(line)
         if result is not None:
             print(f"{GRAY}{result}{DEFAULT}")
+
+
+def run_command(rest: list):
+    """Choose a run mode. `check` never uses a build."""
+    mode = "auto"
+    for flag in ("--compiled", "--interpreter", "--debug"):
+        if flag in rest:
+            mode = flag[2:]
+            rest = [item for item in rest if item != flag]
+    if len(rest) != 1:
+        print(__doc__.strip())
+        return 2
+    name = rest[0]
+    execute = Execute(output=lambda value: print(f"{GRAY}{value}{DEFAULT}"))
+    artifact = build.artifact_for(name)
+    if mode == "debug":
+        print(f"{GRAY}interpreter (debug){DEFAULT}", file=sys.stderr)
+        return run(name, execute)
+    if mode == "compiled":
+        if not build.fresh(artifact):
+            raise DefException(f"{artifact} is missing or stale: compile it first")
+        return run(name, execute, artifact)
+    if mode == "interpreter":
+        return run(name, execute)
+    return run(name, execute, artifact if build.fresh(artifact) else None)
+
+
+def compile_command(rest: list):
+    output = None
+    for flag in ("-o", "--output"):
+        if flag in rest:
+            at = rest.index(flag)
+            if at + 1 >= len(rest):
+                raise DefException(f"{flag} needs a path")
+            output = rest[at + 1]
+            rest = rest[:at] + rest[at + 2:]
+            break
+    if len(rest) != 1:
+        print(__doc__.strip())
+        return 2
+    print(build.compile_program(rest[0], output))
+    return 0
 
 
 def program_folder(file: Path) -> Path:
@@ -131,8 +183,10 @@ def main(arguments=None):
         if not arguments:
             return console()
         command, rest = arguments[0], arguments[1:]
-        if command == "run" and len(rest) == 1:
-            return run(rest[0], Execute(output=lambda value: print(f"{GRAY}{value}{DEFAULT}")))
+        if command == "run":
+            return run_command(rest)
+        if command == "compile":
+            return compile_command(rest)
         if command == "check":
             return check(rest)
         if command == "install":
