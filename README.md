@@ -474,8 +474,9 @@ A statement's: nothing, or a value; then the line is like an expression, with th
 value. A flag's and a modifier's: nothing.
 
 **In def.** The `entry` library gives the words to write entries in def,
-like `set arguments to as written` or `set seen by to the file`: then most entries
-need no Python ([5.7](#57-the-libraries-entries)). deflang-lib's
+like `set arguments to as written`: then most entries need no Python. A modifier that
+needs a real capability declares a cycle hook instead
+([5.7](#57-the-libraries-entries)). deflang-lib's
 [Writing Languages, Flags, Modifiers and Statements](https://github.com/Pedram-A-Keyvani/deflang-lib/blob/main/ENTRIES.md) says what each word
 means, with an example of each kind. This guide's listings use only what the
 interpreter has, so they say it in Python.
@@ -654,8 +655,9 @@ python say A0
 
 // Valid only in its own file.
 modifier internal
-    does in python
-        DEFINITION = self["entry"]["definition"]
+    hook define end in python
+        DEFINITION = self["cycle"]["definition"]
+        DEFINITION.visibility = "file"
         DEFINITION.seen_by = lambda file: file == DEFINITION.file
 
 internal python A0 halved
@@ -668,13 +670,13 @@ say 9 halved
 4.5
 ```
 
-- In front of a definition, its `does` runs right after the definition is made, with
-  `self["entry"]["definition"]`.
+- In front of a definition, a `define` hook runs around making it: the `end` phase sees
+  it in `self["cycle"]["definition"]`.
 - `seen_by` says which files see it: an `internal` definition is seen only by its own
   file, its lines and its other definitions (also when another file calls them).
-- In front of a **name**, it gets `self["entry"]["name"]`, and the rest of the line
-  runs as an ordinary line: `shared visits is 0` runs `shared`'s `does` with the name
-  `"visits"`, then `visits is 0` ([6.2](#62-shared)).
+- In front of a **name**, a `define` hook sees that name in `self["entry"]["name"]`,
+  and the rest of the line runs as an ordinary line: `shared visits is 0` names
+  `"visits"` as shared, then runs `visits is 0` ([6.2](#62-shared)).
 - Modifiers stack: `internal shared …` applies each in turn.
 
 ### 5.5 Statements
@@ -736,8 +738,9 @@ language css
 
 ### 5.7 The Libraries' Entries
 
-deflang-lib declares these, one file each; `use core` uses them all. The flags,
-modifiers and statements are written in def, with the words of the `entry` library:
+deflang-lib declares these, one file each; `use core` uses them all. The flags and
+statements are written in def, with the words of the `entry` library; modifiers use
+cycle hooks when they need a capability of their own:
 
 ```
 flag written
@@ -745,8 +748,10 @@ flag written
         set arguments to as written
 
 modifier internal
-    does in def
-        set seen by to the file
+    hook define end in python
+        DEFINITION = self["cycle"]["definition"]
+        DEFINITION.visibility = "file"
+        DEFINITION.seen_by = lambda file: file == DEFINITION.file
 
 statement comment
     words comment is A0
@@ -848,7 +853,7 @@ python[written] A0 is A1
 
 // One variable for the whole program.
 modifier shared
-    does in python
+    hook define start in python
         HERE, NAME = self["file"], self["entry"]["name"]
         self["files"][HERE]["names"][NAME] = (HERE, NAME)
 

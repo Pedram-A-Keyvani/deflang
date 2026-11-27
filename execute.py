@@ -535,12 +535,29 @@ class Execute:
             self._compiled_line(self._raw_line or rest, "define")
             return None, True
         name = re.match(r"[\w-]+", rest).group(0)
-        for entry in modifiers:
-            self._act(entry, {"name": name, "line": rest, "text": rest})
-        if rest.strip() != name and not self.reloading:
-            return self._line(rest, level, hooks)  # the rest is an ordinary line
-        self._compiled_line(self._raw_line or rest, "define")
-        return None, True
+        # A modifier in front of a name may have `define` hooks: the name is being
+        # defined as a variable, and the hook runs while the line is read (including
+        # a build's read, so the name is in the artifact). self["entry"] is what the
+        # modifier's `does` would get, so a library hook can act on the name without
+        # a reserved word.
+        acts_on = {"kind": "modifier", "name": name, "line": rest, "text": rest}
+
+        def act():
+            for entry in modifiers:
+                self._act(entry, acts_on)
+            if rest.strip() != name and not self.reloading:
+                return self._line(rest, level, hooks)  # the rest is an ordinary line
+            self._compiled_line(self._raw_line or rest, "define")
+            return None, True
+
+        if not self._has_hooks("define", None, hooks):
+            return act()
+        self._entries.append(acts_on)
+        try:
+            with self.cycle("define", text=rest, variable=name, file=self["file"], hooks=hooks):
+                return act()
+        finally:
+            self._entries.pop()
 
     def _flags(self, text: Optional[str], where: str) -> dict:
         """`[written, cache 60 seconds]`: the flags of a definition, {name: its words}. A

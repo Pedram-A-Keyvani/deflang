@@ -101,8 +101,10 @@ line can't be read as a sentence:
 ```
 // Valid only in its own file.
 modifier internal
-    does in def
-        set seen by to the file
+    hook define end in python
+        DEFINITION = self["cycle"]["definition"]
+        DEFINITION.visibility = "file"
+        DEFINITION.seen_by = lambda file: file == DEFINITION.file
 
 // HTML: the body is the def's value, with A0, A1, ... filled in as escaped text.
 // Example: greeting "<b>Sam</b>", with html greeting A0 whose body is <p>Hello A0</p>
@@ -143,9 +145,12 @@ statement comment
   scratch space for one hook to pass values to its later phases. Hooks are never
   installed by declaring an entry: a modifier prefix turns them on for that one line,
   and hooks on a definition (`call`, `body`, `line`, `scope`) come from the flags,
-  language or modifiers written on its definition line. A line hook runs on the lines
-  a build replays too; alias lines a library ran while the build was made are not
-  replayed as runtime lines.
+  language or modifiers written on its definition line. A `define` hook sees the new
+  definition in `self["cycle"]["definition"]`; on a modifier-prefixed name line it
+  sees the name in `self["entry"]["name"]` (and in `self["cycle"]["variable"]`, which
+  tells a name line from a definition line). A line hook runs on the lines a build
+  replays too; alias lines a library ran while the build was made are not replayed as
+  runtime lines.
 
 - **`does in LANGUAGE`** is what the entry does, in any language: `does in def`,
   `does in python`. The interpreter knows what an entry is from where it stands, and
@@ -155,13 +160,13 @@ statement comment
   `does` runs then, where it acts, and finds what it acts on in `self["entry"]`: the
   definition, the name, the value, the body, … (the guide's 5.1).
 - **No flag or modifier is known to the kernel by name.** A definition has three
-  hooks, with the kernel's defaults: `read_pattern` (readable patterns), `read_argument`
-  (read as an expression, for its value) and `seen_by` (every file). An entry changes
-  them; the `entry` library gives the words for it, so entries are written
-  in def, mostly with one word, `set A0 to A1`: `set arguments to as written` (written), `set pattern to regex` (regex),
-  `set seen by to the file` (internal), `set name to shared` (shared), `set comment
-  marker to A0`, `set body to upper-case`, …. Python stays in the kernel and in core's
-  words.
+  reading fields, with the kernel's defaults: `read_pattern` (readable patterns),
+  `read_argument` (read as an expression, for its value) and `seen_by` (every file).
+  The `entry` library gives `set A0 to A1` for making entries in def: `set arguments to
+  as written`, `set pattern to regex`, `set comment marker to A0`, `set body to
+  upper-case`, …. There is no reserved `set` word for visibility or shared names:
+  `internal` and `shared` declare `define` hooks instead. Python stays in the kernel
+  and in core's words.
 - **The help** (the comment lines above) is what the editor shows on hover.
 - **Coloring:** the editor colors an entry's parts so they read apart: the kind word
   (`language`, `flag`, `modifier`, `statement`) like `def`; the name as a declared
@@ -285,7 +290,7 @@ no second language implementation.
 ignores it, and `--debug` reads the sources in debug mode. `check` always reads the
 sources. A build is stale when any file it read has changed. Library-local functions
 (`written`, `regex`, `later`, `internal`) are kept as hook modes, and compiled Python
-bodies are rebuilt from their source when loaded.
+bodies (including hooks) are rebuilt from their source when loaded.
 
 A statement with `reading yes` runs while a build is read, because how the following
 lines are read depends on it: `comment is`, `argument is`, `indent`, and `in the scope

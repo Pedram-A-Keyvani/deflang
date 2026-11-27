@@ -122,7 +122,7 @@ the primitive API.
 
 ### Presets are not capabilities
 
-`modifier shared` currently says:
+`modifier shared` used to say:
 
 ```def
 modifier shared
@@ -130,9 +130,11 @@ modifier shared
         set name to shared
 ```
 
-That is a preset over an option the kernel already understands. It does not teach the
-language anything new. A real modifier capability would be able to say what should
-happen when a definition is created, called, reads arguments, finishes, or fails.
+That was a preset over an option the kernel already understood, and `shared` was a
+reserved word in `set`. It now declares a `define` hook instead, so the capability is
+visible at the line that applies it and no new `set` word is needed. A modifier can say
+what should happen when a definition is created, called, reads arguments, finishes, or
+fails.
 
 ### Missing lifecycle injection
 
@@ -235,7 +237,9 @@ values from `start` to `end` without writing globals.
 
 `self["entry"]` cannot stand in for `owner`: it is the entry whose `does` body is
 running. A modifier's `call` hook runs around the *target definition's* body, so
-`self["entry"]` points at that context, not at the modifier.
+`self["entry"]` points at that context, not at the modifier. The exception is a
+modifier in front of a name: its `define` hook runs with `self["entry"]["name"]` set to
+that name, so `shared` can register it without a reserved word.
 
 ### Where hooks live
 
@@ -474,9 +478,10 @@ come from the kernel schema.
 
 ### Attaching a modifier capability
 
-The modifier declaration installs two hook Definitions. Applying `timed` to a def
-copies those hooks onto that definition. `shared` stays as it is — a preset modifier —
-but it is no longer the only kind of modifier possible.
+The modifier declares two hook Definitions. Applying `timed` to a def copies those
+hooks onto that definition. `shared` and `internal` use `define` hooks for the same
+reason: a modifier owns its behavior, and the kernel has no reserved `set` word for
+what it does.
 
 ### More state examples
 
